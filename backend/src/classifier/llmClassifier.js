@@ -28,6 +28,7 @@ function getClient() {
 const PII_CATEGORIES = [
   'NAME', 'EMAIL', 'PHONE', 'ADDRESS', 'DOB', 'GENDER',
   'AADHAAR', 'PAN', 'BANK_ACCOUNT', 'USER_ID', 'CREDENTIAL',
+  'SALARY', 'HEALTH', 'MARITAL', 'NATIONALITY',
 ];
 
 // ---------------------------------------------------------------------------
@@ -57,7 +58,7 @@ async function classifyTableWithLLM(schemaName, tableName, fields) {
     type:    f.dataType || 'unknown',
     samples: f.samples
       .filter(v => v !== null && v !== undefined && String(v).trim() !== '')
-      .slice(0, 5)
+      .slice(0, 15)
       .map(v => maskValue(String(v).slice(0, 100))),
   }));
 
@@ -103,6 +104,10 @@ Classification rules:
 - BANK_ACCOUNT: bank account numbers, IFSC codes, UPI IDs, card numbers.
 - USER_ID: login names, session tokens, IP addresses, customer IDs, employee IDs, internal system IDs.
 - CREDENTIAL: passwords, API keys, tokens, OTPs, PINs, hashes, secrets.
+- SALARY: salary, CTC, income, payroll, compensation, wages, stipend, remuneration, earnings, base pay.
+- HEALTH: blood group, blood type, medical diagnosis, disability, prescription, allergy, medical record/history.
+- MARITAL: marital status, married/unmarried/divorced, spouse information, matrimonial data.
+- NATIONALITY: nationality, citizenship, country of origin, domicile, residency status.
 - null: status enums, type flags, counters, metrics, timestamps, boolean flags, foreign keys to non-PII tables.
 
 IMPORTANT: All sample values are pre-masked (PII is hidden). You will see patterns like
@@ -123,6 +128,10 @@ Few-shot examples of correct classifications (samples shown in masked form):
 - "pwd_hash" VARCHAR ["$***$10$..."] → CREDENTIAL HIGH
 - "pincode" VARCHAR ["**0001","**0001"] → ADDRESS HIGH (postal codes are address PII)
 - "ifsc" VARCHAR ["H***0001234"] → BANK_ACCOUNT HIGH
+- "salary" NUMERIC ["*****00","*****00"] → SALARY HIGH
+- "blood_group" VARCHAR ["A+","B-","O+"] → HEALTH HIGH
+- "marital_status" VARCHAR ["Married","Single","Divorced"] → MARITAL HIGH
+- "nationality" VARCHAR ["Indian","American"] → NATIONALITY HIGH
 
 Respond ONLY with a valid JSON array, one object per column in the SAME ORDER as input:
 [{"name":"col","pii_category":"CATEGORY_OR_NULL","confidence":"HIGH|MEDIUM|LOW","reason":"one sentence max"}]`;

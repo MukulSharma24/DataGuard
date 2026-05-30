@@ -68,7 +68,7 @@ const PII_KEYWORD_SETS = {
     ['givenname'],  ['surname'],
     ['salutation'], ['prefix'],
     ['fn'],         ['ln'],               // fn=first_name, ln=last_name
-    ['contactname'], ['persname'],
+    ['contactname'], ['persname'], ['contactperson'],
   ],
   EMAIL: [
     ['email'],
@@ -95,7 +95,7 @@ const PII_KEYWORD_SETS = {
     ['street'],     ['streetno'],
     ['city'],       ['town'],
     ['state'],      ['province'],
-    ['zip'],        ['zipcode'],   ['postalcode'], ['pincode'], ['pin'],
+    ['zip'],        ['zipcode'],   ['postalcode'], ['pincode'],
     ['country'],
     ['location'],   ['locality'],
     ['residence'],  ['resi'],
@@ -184,6 +184,39 @@ const PII_KEYWORD_SETS = {
     ['clientsecret'], ['appkey'],  ['servicekey'],
     ['cvv'],        ['cvc'],       ['cvv2'],       // card security codes
     ['encryptionkey'], ['enckey'],
+  ],
+  SALARY: [
+    ['salary'],
+    ['ctc'],
+    ['income'],
+    ['compensation'],
+    ['payroll'],
+    ['wage'],        ['wages'],
+    ['stipend'],
+    ['remuneration'],
+    ['earnings'],
+    ['gross', 'salary'], ['net', 'salary'],
+    ['annualsalary'],    ['monthlysalary'],
+    ['basepay'],         ['basesalary'],
+  ],
+  HEALTH: [
+    ['bloodgroup'],  ['blood', 'group'],  ['blood', 'type'],
+    ['diagnosis'],
+    ['medical', 'record'],  ['medical', 'history'],
+    ['disability'],
+    ['prescription'],
+    ['allergy'],     ['allergies'],
+  ],
+  MARITAL: [
+    ['marital'],
+    ['maritalstatus'],
+    ['spouse'],
+    ['matrimonial'],
+  ],
+  NATIONALITY: [
+    ['nationality'],
+    ['citizenship'],
+    ['domicile'],
   ],
 };
 
@@ -287,6 +320,20 @@ function matchFieldName(tokens) {
   const BOOL_PREFIXES = new Set(['is', 'has', 'can', 'should', 'was', 'did', 'will', 'allow']);
   if (tokens.length >= 2 && BOOL_PREFIXES.has(tokens[0])) return null;
 
+  // age + range/limit modifier → operational metric, not personal DOB data.
+  // e.g. age_group, age_limit, min_age, max_age, age_band, age_tier → NOT PII
+  if (tokenSet.has('age') && tokens.length >= 2) {
+    const AGE_METRIC_WORDS = new Set(['group', 'limit', 'min', 'max', 'range', 'band', 'tier', 'bracket', 'category']);
+    if ([...tokenSet].some(t => AGE_METRIC_WORDS.has(t))) return null;
+  }
+
+  // Technical hash columns are integrity checksums, NOT credentials.
+  // e.g. file_hash, content_hash, git_hash, commit_sha → NOT CREDENTIAL
+  if (tokenSet.has('hash') && tokens.length >= 2) {
+    const HASH_CONTEXT = new Set(['file', 'content', 'git', 'commit', 'sha', 'md5', 'crc', 'checksum']);
+    if ([...tokenSet].some(t => HASH_CONTEXT.has(t))) return null;
+  }
+
   // Specific overrides: catch fields whose names contain generic PII tokens but mean something
   // more specific. e.g. "ip_address" contains "address" but is a network identifier, not
   // a physical address; "username" contains "name" but is a login identifier, not a person's name.
@@ -303,6 +350,7 @@ function matchFieldName(tokens) {
   const ENTITY_TOKENS = new Set([
     'bank', 'company', 'firm', 'org', 'organization', 'organisation',
     'product', 'item', 'shop', 'store', 'brand', 'category', 'role', 'group',
+    'service', 'department', 'dept', 'plan', 'course', 'module', 'project', 'team',
   ]);
   if (tokens.length === 2 && tokenSet.has('name') &&
       [...tokenSet].some(t => ENTITY_TOKENS.has(t))) {
@@ -375,7 +423,39 @@ function looksHashed(value) {
 }
 
 // ---------------------------------------------------------------------------
-// 7. Sample masking
+// 7. Address value heuristic
+// ---------------------------------------------------------------------------
+
+const ADDRESS_VALUE_KEYWORDS = new Set([
+  'road', 'rd', 'street', 'st', 'avenue', 'ave', 'lane',
+  'nagar', 'colony', 'sector', 'phase', 'block', 'plot',
+  'flat', 'floor', 'building', 'complex', 'society',
+  'village', 'district', 'tehsil', 'mandal', 'taluka',
+]);
+
+function looksLikeAddress(value) {
+  const str = String(value).trim().toLowerCase();
+  if (!/\d/.test(str)) return false;
+  const words = str.split(/[\s,\-\/]+/);
+  return words.some(w => ADDRESS_VALUE_KEYWORDS.has(w));
+}
+
+// ---------------------------------------------------------------------------
+// 7b. Sample flattener — handles JSONB objects and PostgreSQL/MongoDB arrays
+// ---------------------------------------------------------------------------
+
+function flattenSampleValue(v) {
+  if (v === null || v === undefined) return [];
+  if (Array.isArray(v)) return v.flatMap(flattenSampleValue);
+  if (typeof v === 'object' && !(v instanceof Date)) {
+    return Object.values(v).flatMap(flattenSampleValue);
+  }
+  const str = v instanceof Date ? v.toISOString() : String(v);
+  return str.trim() ? [str] : [];
+}
+
+// ---------------------------------------------------------------------------
+// 8. Sample masking
 // ---------------------------------------------------------------------------
 
 /**
@@ -459,10 +539,11 @@ function classifyField(fieldName, sampleValues = []) {
   const tokens    = normaliseFieldName(leafName);
   const nameMatch = matchFieldName(tokens);
 
-  // Sample up to 5 non-null, non-empty values for value-level checks
+  // Flatten arrays/JSONB objects then take up to 15 non-null, non-empty values
   const nonNullSamples = sampleValues
-    .filter(v => v !== null && v !== undefined && String(v).trim() !== '')
-    .slice(0, 5);
+    .flatMap(flattenSampleValue)
+    .filter(v => v.trim() !== '')
+    .slice(0, 15);
 
   let valueMatch = null;
   let hashedFlag = false;
@@ -497,6 +578,13 @@ function classifyField(fieldName, sampleValues = []) {
     valueMatch = 'GENDER';
   }
 
+  // ADDRESS: value-level heuristic — digit + known address keyword (Road, Nagar, etc.)
+  if (!valueMatch) {
+    for (const sample of nonNullSamples) {
+      if (looksLikeAddress(sample)) { valueMatch = 'ADDRESS'; break; }
+    }
+  }
+
   const category = nameMatch?.category ?? (valueMatch ? valueMatchToCategory(valueMatch) : null);
   if (!category) return null;
 
@@ -521,11 +609,19 @@ function valueMatchToCategory(vmCategory) {
   return map[vmCategory] ?? vmCategory;
 }
 
-// NAME value pattern is a weak signal — only use when majority of samples look like names
+function toTitleCase(str) {
+  return str.replace(/\b\w+/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+}
+
+// NAME value pattern — also normalises ALL-CAPS values (RAHUL SHARMA → Rahul Sharma)
+// Uses 50% majority threshold to handle mixed columns.
 function isMajorityNames(samples) {
   if (!samples.length) return false;
-  const hits = samples.filter(v => VALUE_PATTERNS.NAME.test(String(v).trim()));
-  return hits.length >= Math.ceil(samples.length * 0.6); // 60% threshold
+  const hits = samples.filter(v => {
+    const s = String(v).trim();
+    return VALUE_PATTERNS.NAME.test(s) || VALUE_PATTERNS.NAME.test(toTitleCase(s));
+  });
+  return hits.length >= Math.ceil(samples.length * 0.6);
 }
 
 /**

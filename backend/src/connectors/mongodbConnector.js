@@ -77,6 +77,12 @@ function resolveDatabase(config) {
   return undefined; // let the driver use its default
 }
 
+// Remove numeric array indices from dot-paths so addresses.0.street and
+// addresses.1.street both merge into addresses.street — avoids duplicate findings.
+function normalizeArrayPath(path) {
+  return path.replace(/\.\d+(?=\.|$)/g, '');
+}
+
 async function discoverCollections(config) {
   const client = buildClient(config);
   try {
@@ -90,21 +96,40 @@ async function discoverCollections(config) {
     for (const info of collectionInfos) {
       const name = info.name;
       try {
-        const docs = await db.collection(name).find({}).limit(SAMPLE_LIMIT).toArray();
+        // Distributed sampling: beginning + middle + end (mirrors PostgreSQL strategy).
+        // Small collections (≤ 2× limit) just read sequentially.
+        const total = await db.collection(name).estimatedDocumentCount();
+        let docs;
+        if (total <= SAMPLE_LIMIT * 2) {
+          docs = await db.collection(name).find({}).limit(SAMPLE_LIMIT).toArray();
+        } else {
+          const slice     = Math.ceil(SAMPLE_LIMIT / 3);
+          const midSkip   = Math.max(0, Math.floor(total / 2) - Math.floor(slice / 2));
+          const endSkip   = Math.max(midSkip + slice, total - slice);
+          const [startDocs, midDocs, endDocs] = await Promise.all([
+            db.collection(name).find({}).limit(slice).toArray(),
+            db.collection(name).find({}).skip(midSkip).limit(slice).toArray(),
+            db.collection(name).find({}).skip(endSkip).limit(slice).toArray(),
+          ]);
+          docs = [...startDocs, ...midDocs, ...endDocs];
+        }
+
         if (docs.length === 0) {
           results.push({ name, fields: [] });
           continue;
         }
 
-        // Aggregate all field paths seen across sample docs
-        const fieldMap = new Map(); // dotPath → Set of sample values
+        // Aggregate all field paths seen across sample docs.
+        // Numeric indices are normalised out so array sub-fields merge into one path.
+        const fieldMap = new Map(); // dotPath → sample values
 
         for (const doc of docs) {
           const flat = flattenDocument(doc);
           for (const [path, value] of Object.entries(flat)) {
-            if (!fieldMap.has(path)) fieldMap.set(path, []);
+            const normalPath = normalizeArrayPath(path);
+            if (!fieldMap.has(normalPath)) fieldMap.set(normalPath, []);
             if (value !== null && value !== undefined) {
-              fieldMap.get(path).push(value);
+              fieldMap.get(normalPath).push(value);
             }
           }
         }
