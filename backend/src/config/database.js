@@ -18,7 +18,7 @@ function getPool() {
       user:     process.env.APP_DB_USER     || 'dataguard',
       password: process.env.APP_DB_PASSWORD,
       ssl,
-      max:      10,
+      max:      25,
       idleTimeoutMillis:    30000,
       connectionTimeoutMillis: 10000,
     });

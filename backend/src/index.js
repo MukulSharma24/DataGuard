@@ -49,11 +49,11 @@ app.use(cookieParser());
 
 // Rate limiting — general API cap + tighter cap on scan triggers
 const apiLimiter = rateLimit({
-  windowMs:       15 * 60 * 1000,  // 15 minutes
-  max:            200,
+  windowMs:        15 * 60 * 1000,
+  max:             2000,
   standardHeaders: true,
   legacyHeaders:   false,
-  message:        { error: 'Too many requests — please try again later' },
+  message:         { error: 'Too many requests — please try again later' },
 });
 
 const scanLimiter = rateLimit({

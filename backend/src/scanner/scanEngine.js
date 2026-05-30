@@ -19,6 +19,13 @@ function cancelScan(scanRunId) { _cancellations.add(scanRunId); }
 function isCancelled(scanRunId) { return _cancellations.has(scanRunId); }
 
 // ---------------------------------------------------------------------------
+// Global scan limits
+// ---------------------------------------------------------------------------
+
+const MAX_CONCURRENT_SCANS = 5;          // max scans running at the same time
+const SCAN_TIMEOUT_MS       = 30 * 60 * 1000; // 30 minutes — auto-cancel hung scans
+
+// ---------------------------------------------------------------------------
 // Concurrency limiter — run up to `limit` async tasks simultaneously
 // ---------------------------------------------------------------------------
 
@@ -284,6 +291,16 @@ async function scanMongodb(scanRunId, sourceId, connConfig, profileConfig) {
 // ---------------------------------------------------------------------------
 
 async function triggerScan(profileId, sourceId, connConfig, sourceType, profileConfig = {}) {
+  // Reject if too many scans are already running — prevents pool exhaustion
+  const { rows: running } = await query(
+    `SELECT COUNT(*) AS cnt FROM scan_runs WHERE status = 'running'`
+  );
+  if (parseInt(running[0].cnt, 10) >= MAX_CONCURRENT_SCANS) {
+    const err = new Error(`Too many scans running (max ${MAX_CONCURRENT_SCANS}). Wait for one to finish before starting another.`);
+    err.status = 429;
+    throw err;
+  }
+
   const { rows } = await query(
     `INSERT INTO scan_runs (profile_id, source_id, status, started_at)
      VALUES ($1, $2, 'running', NOW())
@@ -296,12 +313,19 @@ async function triggerScan(profileId, sourceId, connConfig, sourceType, profileC
 
   const queue = getScanQueue();
   if (queue) {
-    // BullMQ path: credentials are NOT passed to Redis — worker re-fetches from DB
     await queue.add('run-scan', { scanRunId, profileId, sourceId, sourceType });
     logger.info(`Scan ${scanRunId} enqueued via BullMQ`);
   } else {
-    // In-process fallback when Redis is not configured
-    setImmediate(() => runScan(scanRunId, sourceId, connConfig, sourceType, profileConfig));
+    // In-process fallback — auto-cancel if scan exceeds timeout
+    const timeoutHandle = setTimeout(() => {
+      logger.warn(`Scan ${scanRunId} exceeded ${SCAN_TIMEOUT_MS / 60000}min timeout — auto-cancelling`);
+      cancelScan(scanRunId);
+    }, SCAN_TIMEOUT_MS);
+
+    setImmediate(() =>
+      runScan(scanRunId, sourceId, connConfig, sourceType, profileConfig)
+        .finally(() => clearTimeout(timeoutHandle))
+    );
   }
 
   return scanRunId;
