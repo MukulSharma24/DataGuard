@@ -109,3 +109,36 @@ Detection runs on both field names and sample values. The classifier handles cam
 ## License
 
 MIT
+
+---
+
+## Screenshots
+
+### Overview
+![Overview](docs/screenshots/overview.png)
+
+### Adding a Data Source
+![Add Data Source](docs/screenshots/add-source.png)
+
+### Scan Profiles
+![Scan Profiles](docs/screenshots/scan-profiles.png)
+
+![New Scan Profile](docs/screenshots/new-profile.png)
+
+### Scan Runs — Live Log
+![Scan Detail with Live Log](docs/screenshots/scan-detail.png)
+
+### Finding Review
+![Findings Review](docs/screenshots/findings-review.png)
+
+### Scan Runs History
+![Scan Runs](docs/screenshots/scan-runs.png)
+
+### Data Catalogue
+![Data Catalogue](docs/screenshots/data-catalogue.png)
+
+### Data Map
+![Data Map](docs/screenshots/data-map.png)
+
+### Logs
+![Logs](docs/screenshots/logs.png)
