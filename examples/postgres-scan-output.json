@@ -1,0 +1,246 @@
+{
+  "_note": "Example scan output from the seed PostgreSQL database. Generated after running a full scan against the seed-pg container.",
+  "scan": {
+    "id": "a1b2c3d4-0000-0000-0000-000000000001",
+    "source_name": "Seed PostgreSQL",
+    "source_type": "postgresql",
+    "status": "completed",
+    "tables_scanned": 7,
+    "findings_count": 21,
+    "started_at": "2024-01-15T10:00:00Z",
+    "completed_at": "2024-01-15T10:00:12Z"
+  },
+  "findings": [
+    {
+      "schema_name": "customers",
+      "table_name": "users",
+      "field_path": "first_name",
+      "pii_category": "NAME",
+      "confidence_score": 60,
+      "confidence_level": "MEDIUM",
+      "detection_reason": "Field name \"first_name\" strongly matches NAME pattern",
+      "sample_values_masked": ["A***", "P***", "R***"],
+      "review_status": "unreviewed"
+    },
+    {
+      "schema_name": "customers",
+      "table_name": "users",
+      "field_path": "email",
+      "pii_category": "EMAIL",
+      "confidence_score": 90,
+      "confidence_level": "HIGH",
+      "detection_reason": "Field name \"email\" strongly matches EMAIL pattern; Sample values match EMAIL regex pattern",
+      "sample_values_masked": ["a***@email.com", "p***@gmail.com", "r***@company.in"],
+      "review_status": "confirmed"
+    },
+    {
+      "schema_name": "customers",
+      "table_name": "users",
+      "field_path": "phone_number",
+      "pii_category": "PHONE",
+      "confidence_score": 90,
+      "confidence_level": "HIGH",
+      "detection_reason": "Field name \"phone_number\" strongly matches PHONE pattern; Sample values match PHONE regex pattern",
+      "sample_values_masked": ["*******3210", "*******3456", "*******5678"],
+      "review_status": "confirmed"
+    },
+    {
+      "schema_name": "customers",
+      "table_name": "users",
+      "field_path": "date_of_birth",
+      "pii_category": "DOB",
+      "confidence_score": 90,
+      "confidence_level": "HIGH",
+      "detection_reason": "Field name \"date_of_birth\" strongly matches DOB pattern; Sample values match DOB regex pattern",
+      "sample_values_masked": ["1***-04-15", "1***-11-22", "1***-07-08"],
+      "review_status": "confirmed"
+    },
+    {
+      "schema_name": "customers",
+      "table_name": "users",
+      "field_path": "gender",
+      "pii_category": "GENDER",
+      "confidence_score": 60,
+      "confidence_level": "MEDIUM",
+      "detection_reason": "Field name \"gender\" strongly matches GENDER pattern",
+      "sample_values_masked": ["M***", "F***"],
+      "review_status": "unreviewed"
+    },
+    {
+      "schema_name": "customers",
+      "table_name": "addresses",
+      "field_path": "address",
+      "pii_category": "ADDRESS",
+      "confidence_score": 60,
+      "confidence_level": "MEDIUM",
+      "detection_reason": "Field name \"address\" strongly matches ADDRESS pattern",
+      "sample_values_masked": ["1***", "F***", "7***"],
+      "review_status": "unreviewed"
+    },
+    {
+      "schema_name": "customers",
+      "table_name": "addresses",
+      "field_path": "city",
+      "pii_category": "ADDRESS",
+      "confidence_score": 60,
+      "confidence_level": "MEDIUM",
+      "detection_reason": "Field name \"city\" strongly matches ADDRESS pattern",
+      "sample_values_masked": ["B***", "M***", "K***"],
+      "review_status": "unreviewed"
+    },
+    {
+      "schema_name": "customers",
+      "table_name": "addresses",
+      "field_path": "pincode",
+      "pii_category": "ADDRESS",
+      "confidence_score": 60,
+      "confidence_level": "MEDIUM",
+      "detection_reason": "Field name \"pincode\" strongly matches ADDRESS pattern",
+      "sample_values_masked": ["5***01", "4***01", "7***16"],
+      "review_status": "unreviewed"
+    },
+    {
+      "schema_name": "customers",
+      "table_name": "payment_info",
+      "field_path": "account_number",
+      "pii_category": "BANK_ACCOUNT",
+      "confidence_score": 90,
+      "confidence_level": "HIGH",
+      "detection_reason": "Field name \"account_number\" strongly matches BANK_ACCOUNT pattern",
+      "sample_values_masked": ["*********3456", "*********7654"],
+      "review_status": "confirmed"
+    },
+    {
+      "schema_name": "customers",
+      "table_name": "payment_info",
+      "field_path": "pan_number",
+      "pii_category": "PAN",
+      "confidence_score": 90,
+      "confidence_level": "HIGH",
+      "detection_reason": "Field name \"pan_number\" strongly matches PAN pattern; Sample values match PAN regex pattern",
+      "sample_values_masked": ["A***E1234F", "F***J5678K"],
+      "review_status": "confirmed"
+    },
+    {
+      "schema_name": "hr",
+      "table_name": "employees",
+      "field_path": "full_name",
+      "pii_category": "NAME",
+      "confidence_score": 60,
+      "confidence_level": "MEDIUM",
+      "detection_reason": "Field name \"full_name\" strongly matches NAME pattern",
+      "sample_values_masked": ["R***n Verma", "N***a Tiwari"],
+      "review_status": "confirmed"
+    },
+    {
+      "schema_name": "hr",
+      "table_name": "employees",
+      "field_path": "email_id",
+      "pii_category": "EMAIL",
+      "confidence_score": 90,
+      "confidence_level": "HIGH",
+      "detection_reason": "Field name \"email_id\" strongly matches EMAIL pattern; Sample values match EMAIL regex pattern",
+      "sample_values_masked": ["r***@company.com", "n***@company.com"],
+      "review_status": "confirmed"
+    },
+    {
+      "schema_name": "hr",
+      "table_name": "employees",
+      "field_path": "mob",
+      "pii_category": "PHONE",
+      "confidence_score": 90,
+      "confidence_level": "HIGH",
+      "detection_reason": "Field name \"mob\" strongly matches PHONE pattern; Sample values match PHONE regex pattern",
+      "sample_values_masked": ["*******1234", "*******9012"],
+      "review_status": "confirmed"
+    },
+    {
+      "schema_name": "hr",
+      "table_name": "employees",
+      "field_path": "dob_dt",
+      "pii_category": "DOB",
+      "confidence_score": 90,
+      "confidence_level": "HIGH",
+      "detection_reason": "Field name \"dob_dt\" strongly matches DOB pattern; Sample values match DOB regex pattern",
+      "sample_values_masked": ["1***-05-20", "1***-09-10"],
+      "review_status": "confirmed"
+    },
+    {
+      "schema_name": "hr",
+      "table_name": "employees",
+      "field_path": "aadhaar_no",
+      "pii_category": "AADHAAR",
+      "confidence_score": 90,
+      "confidence_level": "HIGH",
+      "detection_reason": "Field name \"aadhaar_no\" strongly matches AADHAAR pattern; Sample values match AADHAAR regex pattern",
+      "sample_values_masked": ["1*** 5*** 9012", "2*** 6*** 0123"],
+      "review_status": "confirmed"
+    },
+    {
+      "schema_name": "hr",
+      "table_name": "employees",
+      "field_path": "pan_no",
+      "pii_category": "PAN",
+      "confidence_score": 90,
+      "confidence_level": "HIGH",
+      "detection_reason": "Field name \"pan_no\" strongly matches PAN pattern; Sample values match PAN regex pattern",
+      "sample_values_masked": ["A***E1234F", "F***J5678K"],
+      "review_status": "confirmed"
+    },
+    {
+      "schema_name": "hr",
+      "table_name": "credentials",
+      "field_path": "password",
+      "pii_category": "CREDENTIAL",
+      "confidence_score": 60,
+      "confidence_level": "MEDIUM",
+      "detection_reason": "Field name \"password\" strongly matches CREDENTIAL pattern; Values appear hashed/encrypted — name-based detection only",
+      "sample_values_masked": ["$***$10$XXX..."],
+      "review_status": "confirmed"
+    },
+    {
+      "schema_name": "hr",
+      "table_name": "credentials",
+      "field_path": "api_key",
+      "pii_category": "CREDENTIAL",
+      "confidence_score": 60,
+      "confidence_level": "MEDIUM",
+      "detection_reason": "Field name \"api_key\" strongly matches CREDENTIAL pattern",
+      "sample_values_masked": ["a***_live_XXX..."],
+      "review_status": "confirmed"
+    },
+    {
+      "schema_name": "analytics",
+      "table_name": "user_profiles",
+      "field_path": "display_nm",
+      "pii_category": "NAME",
+      "confidence_score": 60,
+      "confidence_level": "MEDIUM",
+      "detection_reason": "Field name \"display_nm\" strongly matches NAME pattern",
+      "sample_values_masked": ["A*** S.", "P*** M."],
+      "review_status": "unreviewed"
+    },
+    {
+      "schema_name": "analytics",
+      "table_name": "user_profiles",
+      "field_path": "contact_no",
+      "pii_category": "PHONE",
+      "confidence_score": 90,
+      "confidence_level": "HIGH",
+      "detection_reason": "Field name \"contact_no\" strongly matches PHONE pattern; Sample values match PHONE regex pattern",
+      "sample_values_masked": ["*******3210", "*******3456"],
+      "review_status": "unreviewed"
+    },
+    {
+      "schema_name": "analytics",
+      "table_name": "user_profiles",
+      "field_path": "emailAddress",
+      "pii_category": "EMAIL",
+      "confidence_score": 90,
+      "confidence_level": "HIGH",
+      "detection_reason": "Field name \"emailAddress\" strongly matches EMAIL pattern; Sample values match EMAIL regex pattern",
+      "sample_values_masked": ["a***@email.com", "p***@gmail.com"],
+      "review_status": "unreviewed"
+    }
+  ]
+}

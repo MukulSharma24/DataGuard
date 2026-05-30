@@ -1,0 +1,175 @@
+'use strict';
+
+const { MongoClient } = require('mongodb');
+const logger = require('../utils/logger');
+
+const CONNECT_TIMEOUT_MS = 10_000;
+const SAMPLE_LIMIT       = 100;
+
+/**
+ * Build a MongoClient from config.
+ * connectionString takes precedence over host/port/database.
+ */
+function buildClient(config) {
+  const uri = (config.connectionString && config.connectionString.trim())
+    || buildUri(config);
+
+  const isSrv = uri.startsWith('mongodb+srv');
+
+  return new MongoClient(uri, {
+    connectTimeoutMS:            CONNECT_TIMEOUT_MS,
+    serverSelectionTimeoutMS:    CONNECT_TIMEOUT_MS,
+    // Let the driver auto-handle TLS from the URI scheme.
+    // For mongodb+srv we explicitly allow invalid certs so cloud hosts
+    // (Render, Railway, etc.) work without needing the Atlas CA bundle.
+    ...(isSrv ? { tls: true, tlsAllowInvalidCertificates: true } : {}),
+  });
+}
+
+function buildUri(config) {
+  const host     = config.host     || 'localhost';
+  const port     = config.port     || 27017;
+  const database = config.database || 'test';
+  const user     = config.user;
+  const password = config.password;
+
+  if (user && password) {
+    return `mongodb://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${database}`;
+  }
+  return `mongodb://${host}:${port}/${database}`;
+}
+
+/**
+ * Test connectivity. Returns { success, latencyMs?, error? }.
+ */
+async function testConnection(config) {
+  const client = buildClient(config);
+  const start  = Date.now();
+  try {
+    await client.connect();
+    await client.db().command({ ping: 1 });
+    return { success: true, latencyMs: Date.now() - start };
+  } catch (err) {
+    return { success: false, error: err.message };
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
+
+/**
+ * Discover all collections and their field paths.
+ * Returns:
+ *   [ { name: collectionName, fields: [ { name: dotPath, samples: [] } ] } ]
+ *
+ * Fields are derived by recursively flattening sample documents.
+ */
+function resolveDatabase(config) {
+  if (config.database && config.database.trim()) return config.database.trim();
+  // Extract database name from connection string path segment
+  // e.g. mongodb+srv://user:pass@host/mydb?opts  →  mydb
+  if (config.connectionString) {
+    try {
+      const url = new URL(config.connectionString.replace('mongodb+srv://', 'https://').replace('mongodb://', 'https://'));
+      const dbFromPath = url.pathname.replace(/^\//, '').split('?')[0];
+      if (dbFromPath) return dbFromPath;
+    } catch {}
+  }
+  return undefined; // let the driver use its default
+}
+
+async function discoverCollections(config) {
+  const client = buildClient(config);
+  try {
+    await client.connect();
+    const db = client.db(resolveDatabase(config));
+    logger.info('MongoDB connected — discovering collections', { database: config.database });
+
+    const collectionInfos = await db.listCollections().toArray();
+    const results = [];
+
+    for (const info of collectionInfos) {
+      const name = info.name;
+      try {
+        const docs = await db.collection(name).find({}).limit(SAMPLE_LIMIT).toArray();
+        if (docs.length === 0) {
+          results.push({ name, fields: [] });
+          continue;
+        }
+
+        // Aggregate all field paths seen across sample docs
+        const fieldMap = new Map(); // dotPath → Set of sample values
+
+        for (const doc of docs) {
+          const flat = flattenDocument(doc);
+          for (const [path, value] of Object.entries(flat)) {
+            if (!fieldMap.has(path)) fieldMap.set(path, []);
+            if (value !== null && value !== undefined) {
+              fieldMap.get(path).push(value);
+            }
+          }
+        }
+
+        const fields = Array.from(fieldMap.entries()).map(([fieldPath, samples]) => ({
+          name:    fieldPath,
+          samples: samples.slice(0, SAMPLE_LIMIT),
+        }));
+
+        results.push({ name, fields });
+      } catch (err) {
+        logger.warn(`Failed to sample collection ${name}`, { message: err.message });
+        results.push({ name, fields: [], error: err.message });
+      }
+    }
+
+    return results;
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
+
+/**
+ * Recursively flatten a MongoDB document into a dot-path object.
+ * Arrays are indexed: e.g. addresses[0].street → "addresses.0.street"
+ * _id is excluded.
+ *
+ * @param {object} doc
+ * @param {string} prefix
+ * @param {number} maxDepth - guard against pathological nesting
+ * @returns {Record<string, any>}
+ */
+function flattenDocument(doc, prefix = '', maxDepth = 8) {
+  const result = {};
+  if (!doc || typeof doc !== 'object' || maxDepth <= 0) return result;
+
+  for (const [key, value] of Object.entries(doc)) {
+    if (key === '_id') continue;          // skip Mongo internal ID
+    const path = prefix ? `${prefix}.${key}` : key;
+
+    if (value === null || value === undefined) {
+      result[path] = null;
+    } else if (Array.isArray(value)) {
+      if (value.length === 0) {
+        result[path] = null;
+      } else {
+        // Index only the first element to infer structure; use all for sampling
+        for (let i = 0; i < Math.min(value.length, 3); i++) {
+          const elem = value[i];
+          if (elem !== null && typeof elem === 'object' && !Array.isArray(elem)) {
+            Object.assign(result, flattenDocument(elem, `${path}.${i}`, maxDepth - 1));
+          } else {
+            result[`${path}.${i}`] = elem;
+          }
+        }
+      }
+    } else if (typeof value === 'object' && !(value instanceof Date)) {
+      Object.assign(result, flattenDocument(value, path, maxDepth - 1));
+    } else {
+      // Scalar or Date — store as string for regex matching
+      result[path] = value instanceof Date ? value.toISOString() : value;
+    }
+  }
+
+  return result;
+}
+
+module.exports = { testConnection, discoverCollections };

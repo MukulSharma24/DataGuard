@@ -1,0 +1,419 @@
+{
+  "info": {
+    "name": "DataGuard API",
+    "description": "Complete API collection for DataGuard — PII Discovery & Data Lifecycle Management.\n\n**Setup:**\n1. Set the `baseUrl` variable (default: http://localhost:4000)\n2. Run **Auth → Login** first — Postman stores the httpOnly cookie automatically\n3. All other requests will authenticate via that cookie\n\n**Tip:** After creating a source/profile/scan, copy the returned `id` into the collection variables (`sourceId`, `profileId`, `scanId`, `findingId`) to use in subsequent requests.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl",   "value": "http://localhost:4000", "type": "string" },
+    { "key": "sourceId",  "value": "",                      "type": "string", "description": "Paste a data_source id here after creating one" },
+    { "key": "profileId", "value": "",                      "type": "string", "description": "Paste a scan_profile id here after creating one" },
+    { "key": "scanId",    "value": "",                      "type": "string", "description": "Paste a scan_run id here after triggering a scan" },
+    { "key": "findingId", "value": "",                      "type": "string", "description": "Paste a finding id here after a scan completes" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] },
+            "description": "Returns server status and database connectivity. No authentication required."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@dataguard.dev\",\n  \"password\": \"DataGuard@2024\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Authenticates the user and sets an httpOnly JWT cookie (`dg_token`). Postman stores this cookie automatically — all subsequent requests will be authenticated."
+          }
+        },
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/auth/me", "host": ["{{baseUrl}}"], "path": ["api", "auth", "me"] },
+            "description": "Returns the currently authenticated user's info from the JWT cookie."
+          }
+        },
+        {
+          "name": "Register User",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/auth/register", "host": ["{{baseUrl}}"], "path": ["api", "auth", "register"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"reviewer@dataguard.dev\",\n  \"password\": \"Reviewer@2024\",\n  \"role\": \"viewer\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Creates a new user. The first call ever creates an admin automatically (bootstrap). All subsequent calls require an active admin session.\n\nRoles: `admin` (read + write), `viewer` (read only)."
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/auth/logout", "host": ["{{baseUrl}}"], "path": ["api", "auth", "logout"] },
+            "description": "Clears the `dg_token` cookie."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Data Sources",
+      "item": [
+        {
+          "name": "List Sources",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/sources", "host": ["{{baseUrl}}"], "path": ["api", "sources"] },
+            "description": "Returns all registered data sources with PII field counts aggregated from completed scans."
+          }
+        },
+        {
+          "name": "Get Source",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/sources/{{sourceId}}", "host": ["{{baseUrl}}"], "path": ["api", "sources", "{{sourceId}}"] },
+            "description": "Returns a single source with its masked connection config (password shown as ***)."
+          }
+        },
+        {
+          "name": "Create Source — PostgreSQL",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/sources", "host": ["{{baseUrl}}"], "path": ["api", "sources"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Production PostgreSQL\",\n  \"type\": \"postgresql\",\n  \"config\": {\n    \"host\": \"localhost\",\n    \"port\": 5432,\n    \"database\": \"seed_db\",\n    \"user\": \"seed_user\",\n    \"password\": \"seed_secret\",\n    \"ssl\": false\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Registers a new PostgreSQL data source. Credentials are AES-256-CBC encrypted before storage and never returned by any endpoint."
+          }
+        },
+        {
+          "name": "Create Source — MongoDB",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/sources", "host": ["{{baseUrl}}"], "path": ["api", "sources"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Production MongoDB\",\n  \"type\": \"mongodb\",\n  \"config\": {\n    \"host\": \"localhost\",\n    \"port\": 27017,\n    \"database\": \"seed_db\",\n    \"user\": \"mongo_user\",\n    \"password\": \"mongo_secret\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Registers a new MongoDB data source."
+          }
+        },
+        {
+          "name": "Update Source",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/sources/{{sourceId}}", "host": ["{{baseUrl}}"], "path": ["api", "sources", "{{sourceId}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Production PostgreSQL (updated)\",\n  \"config\": {\n    \"host\": \"localhost\",\n    \"port\": 5432,\n    \"database\": \"seed_db\",\n    \"user\": \"seed_user\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Partial update of a source. If `config.password` is omitted, the existing stored password is preserved."
+          }
+        },
+        {
+          "name": "Test Connection",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/sources/{{sourceId}}/test", "host": ["{{baseUrl}}"], "path": ["api", "sources", "{{sourceId}}", "test"] },
+            "description": "Attempts a live connection to the data source. Updates the source status to `active` or `error` based on the result. Returns `{ success, latencyMs, error }`."
+          }
+        },
+        {
+          "name": "Delete Source",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/sources/{{sourceId}}", "host": ["{{baseUrl}}"], "path": ["api", "sources", "{{sourceId}}"] },
+            "description": "Permanently deletes a data source. Cascades to scan profiles, scan runs, and findings via ON DELETE CASCADE. Returns 204 No Content."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Scan Profiles",
+      "item": [
+        {
+          "name": "List Profiles",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/profiles",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "profiles"],
+              "query": [
+                { "key": "source_id", "value": "{{sourceId}}", "description": "Optional: filter by source", "disabled": true }
+              ]
+            },
+            "description": "Lists all scan profiles. Optionally filter by `source_id`."
+          }
+        },
+        {
+          "name": "Get Profile",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/profiles/{{profileId}}", "host": ["{{baseUrl}}"], "path": ["api", "profiles", "{{profileId}}"] },
+            "description": "Returns a single scan profile including the source name and type."
+          }
+        },
+        {
+          "name": "Create Profile",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/profiles", "host": ["{{baseUrl}}"], "path": ["api", "profiles"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_id\": \"{{sourceId}}\",\n  \"name\": \"Full PII Scan\",\n  \"description\": \"Scans all schemas with default sample size\",\n  \"config\": {\n    \"includeSchemas\": [],\n    \"excludeSchemas\": [\"audit\", \"logs\"],\n    \"sampleSize\": 100,\n    \"batchSize\": 20\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Creates a reusable scan profile.\n\n- `includeSchemas` / `excludeSchemas` — PostgreSQL schema filters (empty = all schemas)\n- `includeCollections` / `excludeCollections` — MongoDB collection filters\n- `sampleSize` — rows sampled per column (1–1000, default 100)\n- `batchSize` — columns processed in parallel (1–100, default 20)"
+          }
+        },
+        {
+          "name": "Update Profile",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/profiles/{{profileId}}", "host": ["{{baseUrl}}"], "path": ["api", "profiles", "{{profileId}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Full PII Scan (updated)\",\n  \"config\": {\n    \"sampleSize\": 200,\n    \"batchSize\": 20\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Partially updates a scan profile. Only provided fields are changed."
+          }
+        },
+        {
+          "name": "Delete Profile",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/profiles/{{profileId}}", "host": ["{{baseUrl}}"], "path": ["api", "profiles", "{{profileId}}"] },
+            "description": "Permanently deletes a scan profile. Returns 204 No Content."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Scan Runs",
+      "item": [
+        {
+          "name": "List Scans",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/scans",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "scans"],
+              "query": [
+                { "key": "source_id", "value": "{{sourceId}}", "description": "Filter by source", "disabled": true },
+                { "key": "status",    "value": "completed",    "description": "Filter by status: pending | running | completed | failed | partial | cancelled", "disabled": true },
+                { "key": "limit",     "value": "50",           "description": "Max 500", "disabled": true },
+                { "key": "offset",    "value": "0",            "disabled": true }
+              ]
+            },
+            "description": "Lists all scan runs ordered by creation time descending. Supports filtering by `source_id` and `status`."
+          }
+        },
+        {
+          "name": "Get Scan Detail",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/scans/{{scanId}}", "host": ["{{baseUrl}}"], "path": ["api", "scans", "{{scanId}}"] },
+            "description": "Returns full scan detail including the live log, metrics (scan_duration_ms, rows_sampled, rows_per_second, classifier_stats), and profile config."
+          }
+        },
+        {
+          "name": "Get Scan Findings",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/scans/{{scanId}}/findings",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "scans", "{{scanId}}", "findings"],
+              "query": [
+                { "key": "category",         "value": "EMAIL",      "description": "Filter by PII category: NAME | EMAIL | PHONE | ADDRESS | DOB | GENDER | AADHAAR | PAN | BANK_ACCOUNT | USER_ID | CREDENTIAL", "disabled": true },
+                { "key": "confidence_level",  "value": "HIGH",       "description": "Filter: HIGH | MEDIUM | LOW", "disabled": true },
+                { "key": "review_status",     "value": "unreviewed", "description": "Filter: unreviewed | confirmed | rejected | reclassified", "disabled": true }
+              ]
+            },
+            "description": "Returns all PII findings for a scan, ordered by confidence score descending. Supports filtering by category, confidence level, and review status."
+          }
+        },
+        {
+          "name": "Trigger Scan",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/scans", "host": ["{{baseUrl}}"], "path": ["api", "scans"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"profile_id\": \"{{profileId}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Triggers a new scan for the given profile. Returns immediately with `{ scan_run_id, status: 'running' }` — scan executes asynchronously. Poll **Get Scan Detail** to track progress.\n\n**Rate limit:** 10 scan triggers per minute per IP."
+          }
+        },
+        {
+          "name": "Cancel Scan",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/scans/{{scanId}}", "host": ["{{baseUrl}}"], "path": ["api", "scans", "{{scanId}}"] },
+            "description": "Signals a running scan to stop. The current table finishes processing before the scan halts. Status updates to `cancelled`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Findings",
+      "item": [
+        {
+          "name": "Get Finding",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/findings/{{findingId}}", "host": ["{{baseUrl}}"], "path": ["api", "findings", "{{findingId}}"] },
+            "description": "Returns a single finding by ID with full detail including masked sample values and review state."
+          }
+        },
+        {
+          "name": "Confirm Finding",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/findings/{{findingId}}", "host": ["{{baseUrl}}"], "path": ["api", "findings", "{{findingId}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"review_status\": \"confirmed\",\n  \"review_note\": \"Verified — this column contains real user emails\",\n  \"reviewed_by\": \"admin@dataguard.dev\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Marks a finding as confirmed. Confirmed findings can be published to the catalogue."
+          }
+        },
+        {
+          "name": "Reject Finding",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/findings/{{findingId}}", "host": ["{{baseUrl}}"], "path": ["api", "findings", "{{findingId}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"review_status\": \"rejected\",\n  \"review_note\": \"False positive — this is an internal system identifier, not a user ID\",\n  \"reviewed_by\": \"admin@dataguard.dev\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Marks a finding as a false positive. Rejected findings are excluded from catalogue publishing."
+          }
+        },
+        {
+          "name": "Reclassify Finding",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/findings/{{findingId}}", "host": ["{{baseUrl}}"], "path": ["api", "findings", "{{findingId}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"review_status\": \"reclassified\",\n  \"pii_category\": \"ADDRESS\",\n  \"review_note\": \"Scanner detected as USER_ID but this column stores postal addresses\",\n  \"reviewed_by\": \"admin@dataguard.dev\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Changes the PII category of a finding. `pii_category` is required when `review_status` is `reclassified`.\n\nValid categories: NAME | EMAIL | PHONE | ADDRESS | DOB | GENDER | AADHAAR | PAN | BANK_ACCOUNT | USER_ID | CREDENTIAL"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Catalogue",
+      "item": [
+        {
+          "name": "Get Catalogue Stats",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/catalogue/stats", "host": ["{{baseUrl}}"], "path": ["api", "catalogue", "stats"] },
+            "description": "Returns summary counts for the dashboard: total_sources, total_scans, total_findings, confirmed_findings, unreviewed_findings, catalogue_entries. Cached for 30 seconds; invalidated when a scan completes."
+          }
+        },
+        {
+          "name": "List Catalogue (Published)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/catalogue?view=published",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "catalogue"],
+              "query": [
+                { "key": "view",      "value": "published", "description": "published (default) | pending" },
+                { "key": "source_id", "value": "{{sourceId}}", "description": "Filter by source", "disabled": true },
+                { "key": "category",  "value": "EMAIL",      "description": "Filter by PII category", "disabled": true },
+                { "key": "limit",     "value": "100",        "description": "Max 500", "disabled": true },
+                { "key": "offset",    "value": "0",          "disabled": true }
+              ]
+            },
+            "description": "Returns officially published catalogue entries — the confirmed, auditable PII inventory. Default view."
+          }
+        },
+        {
+          "name": "List Catalogue (Pending Review)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/catalogue?view=pending",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "catalogue"],
+              "query": [
+                { "key": "view",      "value": "pending" },
+                { "key": "source_id", "value": "{{sourceId}}", "description": "Filter by source", "disabled": true },
+                { "key": "category",  "value": "EMAIL",        "description": "Filter by PII category", "disabled": true }
+              ]
+            },
+            "description": "Returns unreviewed findings from all completed scans — the pending review queue."
+          }
+        },
+        {
+          "name": "Catalogue by Source",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/catalogue/by-source", "host": ["{{baseUrl}}"], "path": ["api", "catalogue", "by-source"] },
+            "description": "Returns published PII grouped by data source — shows total fields, category count, and categories found per source. Used by the Data Map page."
+          }
+        },
+        {
+          "name": "Catalogue by Category",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/catalogue/by-category", "host": ["{{baseUrl}}"], "path": ["api", "catalogue", "by-category"] },
+            "description": "Returns published PII grouped by category — shows how many fields and sources are affected per PII type."
+          }
+        },
+        {
+          "name": "Publish Findings to Catalogue",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/catalogue/publish/{{scanId}}", "host": ["{{baseUrl}}"], "path": ["api", "catalogue", "publish", "{{scanId}}"] },
+            "description": "Moves all confirmed, unpublished findings from a scan run into the catalogue. Idempotent — already-published findings are skipped via ON CONFLICT DO NOTHING. Returns `{ published: N }`.\n\nOnly works on scans with status `completed` or `partial`."
+          }
+        }
+      ]
+    }
+  ]
+}
