@@ -77,7 +77,15 @@ app.get('/health', async (_req, res) => {
 });
 
 // Auth routes — public (login, logout, register, me)
-app.use('/api/auth', apiLimiter, authRouter);
+// Generous limit for demos — auth requests are cheap and low-risk at this scale
+const authLimiter = rateLimit({
+  windowMs:        15 * 60 * 1000,
+  max:             1000,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  message:         { error: 'Too many requests — please try again later' },
+});
+app.use('/api/auth', authLimiter, authRouter);
 
 // All other /api/* routes require a valid JWT
 app.use('/api', authenticate);
