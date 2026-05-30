@@ -7,10 +7,13 @@ const { cacheGet, cacheSet } = require('../utils/cache');
 const router = express.Router();
 const MAX_LIMIT = 500;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // POST /api/catalogue/publish/:scanId
 // Moves all confirmed findings from a scan run into the catalogue.
 router.post('/publish/:scanId', async (req, res) => {
   const { scanId } = req.params;
+  if (!UUID_RE.test(scanId)) return res.status(400).json({ error: 'Invalid scan ID' });
 
   // Verify scan exists and is completed
   const { rows: scans } = await query(

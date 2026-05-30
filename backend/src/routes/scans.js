@@ -8,6 +8,12 @@ const { triggerScan, cancelScan } = require('../scanner/scanEngine');
 
 const router = express.Router();
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function requireUUID(req, res, next) {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'Invalid ID' });
+  next();
+}
+
 const MAX_LIMIT = 500;
 
 // GET /api/scans
@@ -40,7 +46,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/scans/:id
-router.get('/:id', async (req, res) => {
+router.get('/:id', requireUUID, async (req, res) => {
   const { rows } = await query(
     `SELECT r.*,
             p.name as profile_name, p.config as profile_config,
@@ -60,7 +66,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // GET /api/scans/:id/findings
-router.get('/:id/findings', async (req, res) => {
+router.get('/:id/findings', requireUUID, async (req, res) => {
   const { category, confidence_level, review_status } = req.query;
   const params  = [req.params.id];
   const filters = [`f.scan_run_id = $1`];
@@ -122,7 +128,7 @@ router.post('/', async (req, res) => {
 });
 
 // DELETE /api/scans/:id  — cancel a running scan
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireUUID, async (req, res) => {
   const { rows } = await query(
     `SELECT id, status FROM scan_runs WHERE id = $1`,
     [req.params.id]

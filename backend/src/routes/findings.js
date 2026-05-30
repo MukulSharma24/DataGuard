@@ -6,13 +6,20 @@ const { query } = require('../config/database');
 
 const router = express.Router();
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function requireUUID(req, res, next) {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'Invalid ID' });
+  next();
+}
+
 const PII_CATEGORIES = [
   'NAME','EMAIL','PHONE','ADDRESS','DOB','GENDER',
   'AADHAAR','PAN','BANK_ACCOUNT','USER_ID','CREDENTIAL',
+  'SALARY','HEALTH','MARITAL','NATIONALITY',
 ];
 
 // PATCH /api/findings/:id — confirm, reject, or reclassify
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', requireUUID, async (req, res) => {
   const schema = Joi.object({
     review_status: Joi.string().valid('confirmed', 'rejected', 'reclassified').required(),
     review_note:   Joi.string().max(2000).optional().allow('', null),
@@ -48,7 +55,7 @@ router.patch('/:id', async (req, res) => {
 });
 
 // GET /api/findings/:id
-router.get('/:id', async (req, res) => {
+router.get('/:id', requireUUID, async (req, res) => {
   const { rows } = await query(`SELECT * FROM findings WHERE id = $1`, [req.params.id]);
   if (!rows.length) return res.status(404).json({ error: 'Finding not found' });
   res.json({ finding: rows[0] });

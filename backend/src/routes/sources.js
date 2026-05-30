@@ -10,6 +10,12 @@ const { cacheGet, cacheSet, cacheDel } = require('../utils/cache');
 
 const router = express.Router();
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function requireUUID(req, res, next) {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'Invalid ID' });
+  next();
+}
+
 // ---------------------------------------------------------------------------
 // Validation schemas
 // ---------------------------------------------------------------------------
@@ -88,13 +94,14 @@ router.post('/', async (req, res) => {
     [name, type, encryptedConfig]
   );
 
+  await cacheDel('sources:list');
   res.status(201).json({ source: rows[0] });
 });
 
 // ---------------------------------------------------------------------------
 // GET /api/sources/:id  — returns masked config for edit form
 // ---------------------------------------------------------------------------
-router.get('/:id', async (req, res) => {
+router.get('/:id', requireUUID, async (req, res) => {
   const { rows } = await query(
     `SELECT id, name, type, status, last_scanned, created_at, updated_at, connection_config
      FROM data_sources WHERE id = $1`,
@@ -114,8 +121,8 @@ router.get('/:id', async (req, res) => {
 // ---------------------------------------------------------------------------
 // PATCH /api/sources/:id  — partial update (PUT also accepted for compatibility)
 // ---------------------------------------------------------------------------
-router.patch('/:id', handleSourceUpdate);
-router.put('/:id',   handleSourceUpdate);
+router.patch('/:id', requireUUID, handleSourceUpdate);
+router.put('/:id',   requireUUID, handleSourceUpdate);
 
 async function handleSourceUpdate(req, res) {
   const allowed = Joi.object({
@@ -175,22 +182,24 @@ async function handleSourceUpdate(req, res) {
      FROM data_sources WHERE id = $1`,
     [req.params.id]
   );
+  await cacheDel('sources:list');
   res.json({ source: rows[0] });
 }
 
 // ---------------------------------------------------------------------------
 // DELETE /api/sources/:id  — 204 No Content on success
 // ---------------------------------------------------------------------------
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireUUID, async (req, res) => {
   const { rowCount } = await query(`DELETE FROM data_sources WHERE id = $1`, [req.params.id]);
   if (!rowCount) return res.status(404).json({ error: 'Source not found' });
+  await cacheDel('sources:list');
   res.status(204).end();
 });
 
 // ---------------------------------------------------------------------------
 // POST /api/sources/:id/test  — test connectivity
 // ---------------------------------------------------------------------------
-router.post('/:id/test', async (req, res) => {
+router.post('/:id/test', requireUUID, async (req, res) => {
   const { rows } = await query(
     `SELECT id, type, connection_config FROM data_sources WHERE id = $1`,
     [req.params.id]

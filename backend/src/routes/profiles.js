@@ -6,6 +6,12 @@ const { query } = require('../config/database');
 
 const router = express.Router();
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function requireUUID(req, res, next) {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'Invalid ID' });
+  next();
+}
+
 const profileSchema = Joi.object({
   source_id:   Joi.string().uuid().required(),
   name:        Joi.string().min(1).max(255).required(),
@@ -39,7 +45,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/profiles/:id
-router.get('/:id', async (req, res) => {
+router.get('/:id', requireUUID, async (req, res) => {
   const { rows } = await query(
     `SELECT p.*, s.name as source_name, s.type as source_type
      FROM scan_profiles p
@@ -81,8 +87,8 @@ const profileConfigSchema = Joi.object({
 });
 
 // PATCH /api/profiles/:id  — partial update (PUT also accepted for compatibility)
-router.patch('/:id', handleProfileUpdate);
-router.put('/:id',   handleProfileUpdate);
+router.patch('/:id', requireUUID, handleProfileUpdate);
+router.put('/:id',   requireUUID, handleProfileUpdate);
 
 async function handleProfileUpdate(req, res) {
   const allowed = Joi.object({
@@ -115,7 +121,7 @@ async function handleProfileUpdate(req, res) {
 }
 
 // DELETE /api/profiles/:id  — 204 No Content on success
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireUUID, async (req, res) => {
   const { rowCount } = await query(`DELETE FROM scan_profiles WHERE id = $1`, [req.params.id]);
   if (!rowCount) return res.status(404).json({ error: 'Profile not found' });
   res.status(204).end();
