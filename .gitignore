@@ -40,3 +40,4 @@ next-env.d.ts
 # Misc
 .vercel
 coverage/
+skill.md
