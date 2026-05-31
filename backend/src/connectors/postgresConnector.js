@@ -180,6 +180,10 @@ async function sampleColumn(client, schema, table, column, limit = SAMPLE_LIMIT)
 async function sampleTable(pool, schema, tableName, columns, batchSize = 20, sampleSize = SAMPLE_LIMIT) {
   const client = await pool.connect();
   try {
+    // REPEATABLE READ ensures COUNT(*) and the subsequent SELECT see the exact same
+    // heap snapshot. Without this, autovacuum can move rows between the two queries,
+    // making OFFSET-based sampling non-deterministic across scan runs.
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
     const results = [];
 
     for (let i = 0; i < columns.length; i += batchSize) {
@@ -198,7 +202,11 @@ async function sampleTable(pool, schema, tableName, columns, batchSize = 20, sam
       results.push(...batchResults);
     }
 
+    await client.query('COMMIT');
     return results;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
   } finally {
     client.release();
   }

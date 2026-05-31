@@ -572,10 +572,12 @@ function classifyField(fieldName, sampleValues = []) {
   // NAME: only flag via value if majority of samples look like person names
   if (!valueMatch && isMajorityNames(nonNullSamples)) valueMatch = 'NAME';
 
-  // GENDER: flag if all non-null samples are recognised gender values
-  if (!valueMatch && nonNullSamples.length > 0 &&
-      nonNullSamples.every(v => VALUE_PATTERNS.GENDER.test(String(v).trim()))) {
-    valueMatch = 'GENDER';
+  // GENDER: flag if majority (≥60%) of non-null samples are recognised gender values
+  if (!valueMatch && nonNullSamples.length > 0) {
+    const genderHits = nonNullSamples.filter(v => VALUE_PATTERNS.GENDER.test(String(v).trim()));
+    if (genderHits.length >= Math.ceil(nonNullSamples.length * 0.6)) {
+      valueMatch = 'GENDER';
+    }
   }
 
   // ADDRESS: value-level heuristic — digit + known address keyword (Road, Nagar, etc.)
