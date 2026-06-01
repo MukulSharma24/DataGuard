@@ -177,7 +177,22 @@ async function discoverCollections(config) {
           samples: samples.slice(0, SAMPLE_LIMIT),
         }));
 
-        results.push({ name, fields });
+        // Data retention: the _id ObjectId encodes each document's creation time.
+        // docs[0] is the oldest, docs[last] the newest (sampleCollection returns
+        // them in ascending _id order), so the range is free — no extra query.
+        let dateRange = null;
+        const { ObjectId } = require('mongodb');
+        const firstId = docs[0]?._id;
+        const lastId  = docs[docs.length - 1]?._id;
+        if (firstId instanceof ObjectId && lastId instanceof ObjectId) {
+          dateRange = {
+            oldest: firstId.getTimestamp().toISOString(),
+            newest: lastId.getTimestamp().toISOString(),
+            column: '_id',
+          };
+        }
+
+        results.push({ name, fields, dateRange });
       } catch (err) {
         logger.warn(`Failed to sample collection ${name}`, { message: err.message });
         results.push({ name, fields: [], error: err.message });

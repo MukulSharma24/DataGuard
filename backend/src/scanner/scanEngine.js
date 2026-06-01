@@ -10,6 +10,40 @@ const { cacheDel } = require('../utils/cache');
 const logger = require('../utils/logger');
 
 // ---------------------------------------------------------------------------
+// Cross-table awareness + retention helpers
+// ---------------------------------------------------------------------------
+
+// Categories that make a table "PII-bearing" — i.e. a foreign key pointing here
+// indirectly identifies a person. Pure technical IDs/credentials don't count.
+const PERSONAL_PII = new Set([
+  'NAME', 'EMAIL', 'PHONE', 'ADDRESS', 'DOB', 'AADHAAR', 'PAN',
+  'BANK_ACCOUNT', 'HEALTH', 'BIOMETRIC', 'SALARY', 'MARITAL',
+  'NATIONALITY', 'RELIGION', 'GENDER',
+]);
+
+// Sentinel prefix on a finding's detection_reason that marks a cross-table link.
+// The frontend keys off this to render a "Linked" badge.
+const LINK_MARK = '🔗 Linked PII:';
+
+const DAY_MS = 86_400_000;
+
+// Build a retention record (oldest/newest + derived ages) from a raw date range.
+function buildRetention(range) {
+  if (!range || !range.oldest) return null;
+  const oldest = new Date(range.oldest);
+  const newest = new Date(range.newest ?? range.oldest);
+  if (isNaN(oldest.getTime())) return null;
+  const now = Date.now();
+  return {
+    oldest:   oldest.toISOString(),
+    newest:   newest.toISOString(),
+    column:   range.column,
+    ageDays:  Math.max(0, Math.round((now - oldest.getTime()) / DAY_MS)),
+    spanDays: Math.max(0, Math.round((newest.getTime() - oldest.getTime()) / DAY_MS)),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Cancellation registry
 // ---------------------------------------------------------------------------
 
@@ -167,7 +201,11 @@ async function scanPostgres(scanRunId, sourceId, connConfig, profileConfig) {
   let findingsCount   = 0;
   let rowsSampled     = 0;
   let partialFailure  = false;
+  let relationships   = 0;
   const classifierStats = { patternDetected: 0, llmAdded: 0, highCount: 0, mediumCount: 0, lowCount: 0 };
+  const retention     = {};             // "schema.table" → retention record
+  const tablePii      = new Map();      // "schema.table" → Set of personal PII categories
+  const scannedTables = new Set();      // "schema.table" actually scanned this run
 
   const { rows: [sourceRow] } = await query(
     `SELECT last_scanned FROM data_sources WHERE id = $1`, [sourceId]
@@ -179,6 +217,13 @@ async function scanPostgres(scanRunId, sourceId, connConfig, profileConfig) {
   try {
     await appendLog(scanRunId, 'Discovering PostgreSQL schemas…');
     const schemas = await pgConnector.discoverSchema(pool);
+
+    // Foreign-key map powers cross-table awareness. Fail-soft: no FK info just
+    // means relationship detection is skipped, the rest of the scan is unaffected.
+    const foreignKeys = await pgConnector.discoverForeignKeys(pool).catch(() => []);
+    if (foreignKeys.length > 0) {
+      await appendLog(scanRunId, `Mapped ${foreignKeys.length} foreign-key relationship(s) for cross-table analysis`);
+    }
 
     const filtered = schemas.filter(s => {
       if (includeSchemas.length > 0 && !includeSchemas.includes(s.schema)) return false;
@@ -238,11 +283,26 @@ async function scanPostgres(scanRunId, sourceId, connConfig, profileConfig) {
           // Single multi-row INSERT per table — eliminates N round-trips
           await saveFindings(scanRunId, sourceId, findings, schema, table.name);
           findingsCount += findings.length;
+          const tableKey = `${schema}.${table.name}`;
+          scannedTables.add(tableKey);
           for (const f of findings) {
             if (f.confidenceLevel === 'HIGH')   classifierStats.highCount++;
             if (f.confidenceLevel === 'MEDIUM') classifierStats.mediumCount++;
             if (f.confidenceLevel === 'LOW')    classifierStats.lowCount++;
+            if (PERSONAL_PII.has(f.piiCategory)) {
+              if (!tablePii.has(tableKey)) tablePii.set(tableKey, new Set());
+              tablePii.get(tableKey).add(f.piiCategory);
+            }
           }
+
+          // Data retention — how old the records in this table actually are.
+          // Runs after sampling so the dedicated sample connection is already
+          // released; this just borrows a pooled connection for one MIN/MAX query.
+          const range = await pgConnector
+            .getTableDateRange(pool, schema, table.name, table.columns)
+            .catch(() => null);
+          const ret = buildRetention(range);
+          if (ret) retention[tableKey] = ret;
 
           tablesScanned++;
           await appendLog(scanRunId, `    ✓ ${findings.length} PII field(s) found`);
@@ -257,10 +317,64 @@ async function scanPostgres(scanRunId, sourceId, connConfig, profileConfig) {
       await flushLog(scanRunId); // flush buffered log lines after each schema wave
       tablesScanned += unchanged.size;
     }
+
+    // ---- Cross-table awareness pass -------------------------------------
+    // A foreign key pointing at a PII-bearing table is an indirect identifier.
+    // For each such FK whose own table we scanned: annotate the existing finding,
+    // or create one if the column slipped past name/value matching entirely.
+    if (foreignKeys.length > 0 && tablePii.size > 0 && !isCancelled(scanRunId)) {
+      for (const fk of foreignKeys) {
+        const ownKey = `${fk.schema}.${fk.table}`;
+        const refKey = `${fk.refSchema}.${fk.refTable}`;
+        if (!scannedTables.has(ownKey)) continue;       // FK's table not in scope
+        if (ownKey === refKey) continue;                // self-reference — skip
+        const refCats = tablePii.get(refKey);
+        if (!refCats) continue;                          // referenced table has no PII
+
+        const cats = [...refCats].join(', ');
+        const refName = fk.refSchema === 'public' ? fk.refTable : refKey;
+        const note = `${LINK_MARK} foreign key → "${refName}" which holds ${cats}; indirectly identifies individuals.`;
+
+        try {
+          const { rowCount } = await query(
+            `UPDATE findings
+               SET detection_reason = detection_reason || $1
+             WHERE scan_run_id = $2 AND schema_name = $3
+               AND table_name = $4 AND field_path = $5
+               AND detection_reason NOT LIKE '%' || $6 || '%'`,
+            [`  ${note}`, scanRunId, fk.schema, fk.table, fk.column, LINK_MARK]
+          );
+
+          if (rowCount === 0) {
+            // Column wasn't flagged on its own — record it as an indirect identifier
+            await query(
+              `INSERT INTO findings
+                 (scan_run_id, source_id, schema_name, table_name, field_path,
+                  pii_category, confidence_score, confidence_level,
+                  detection_reason, sample_values_masked)
+               VALUES ($1,$2,$3,$4,$5,'USER_ID',60,'MEDIUM',$6,'[]'::jsonb)`,
+              [scanRunId, sourceId, fk.schema, fk.table, fk.column, note]
+            );
+            findingsCount++;
+            classifierStats.mediumCount++;
+          }
+          relationships++;
+        } catch (err) {
+          logger.warn(`Cross-table enrichment failed for ${ownKey}.${fk.column}`, { message: err.message });
+        }
+      }
+
+      if (relationships > 0) {
+        await appendLog(scanRunId, `  🔗 Flagged ${relationships} indirect identifier(s) via foreign keys to PII-bearing tables`);
+        await flushLog(scanRunId);
+      }
+    }
   } finally {
     await pool.end().catch(() => {});
   }
 
+  classifierStats.retention     = retention;
+  classifierStats.relationships = relationships;
   return { tablesScanned, findingsCount, rowsSampled, classifierStats, partialFailure };
 }
 
@@ -279,6 +393,7 @@ async function scanMongodb(scanRunId, sourceId, connConfig, profileConfig) {
   let rowsSampled    = 0;
   let partialFailure = false;
   const classifierStats = { patternDetected: 0, llmAdded: 0, highCount: 0, mediumCount: 0, lowCount: 0 };
+  const retention = {};   // "default.collection" → retention record
 
   await appendLog(scanRunId, 'Discovering MongoDB collections…');
   let collections;
@@ -330,6 +445,10 @@ async function scanMongodb(scanRunId, sourceId, connConfig, profileConfig) {
         }
       }
 
+      // Data retention — derived from _id ObjectId timestamps by the connector
+      const ret = buildRetention(collection.dateRange);
+      if (ret) retention[`default.${collection.name}`] = ret;
+
       // Single multi-row INSERT per collection
       await saveFindings(scanRunId, sourceId, findings, 'default', collection.name);
       findingsCount += findings.length;
@@ -351,6 +470,8 @@ async function scanMongodb(scanRunId, sourceId, connConfig, profileConfig) {
   await runWithConcurrency(collectionTasks, MONGO_CONCURRENCY);
   await flushLog(scanRunId);
 
+  classifierStats.retention     = retention;
+  classifierStats.relationships = 0;   // MongoDB has no declared foreign keys
   return { tablesScanned, findingsCount, rowsSampled, classifierStats, partialFailure };
 }
 

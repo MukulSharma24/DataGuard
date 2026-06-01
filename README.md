@@ -14,6 +14,8 @@ The scanner samples rows from each column and runs two checks: does the column *
 
 One thing worth noting — on large tables it doesn't just do `LIMIT 500` from the top. It splits the sample across beginning, middle, and end of the table so you're not just reading seed/test data that was inserted first.
 
+It also looks past individual columns. On PostgreSQL it reads the foreign-key graph, so a column like `order.customer_id` that points at a table full of names and emails gets flagged as an indirect identifier even though the column itself is just integers. And for every table it reports how old the data actually is — oldest and newest record — so you can tell a stale 2019 dump apart from something written this week.
+
 Scans run async. You kick one off and the log streams in the browser in real time. You can also close the tab and come back — the scan keeps running on the backend.
 
 ---
@@ -151,12 +153,10 @@ A few things to be honest about before using this in anything production-critica
 
 **PII buried inside longer text is invisible.** The regex patterns match against the full column value. If a `notes` field contains "patient mentioned penicillin allergy" the scanner won't catch it — it only works on values that *are* PII, not values that happen to *contain* PII somewhere inside them.
 
-**No cross-table awareness.** A `user_id` foreign key pointing at a users table isn't flagged as sensitive just because the table it references holds PII. The scanner looks at each column in isolation without tracing relationships between tables.
-
 **Single-word names don't confirm via value pattern.** The name regex needs at least two words separated by a space. Columns full of single first names — which is common in certain South Indian and Southeast Asian naming conventions — won't trigger value-level NAME confirmation. The column name keyword match (`first_name`, `fname`, etc.) still fires, just at MEDIUM instead of HIGH.
 
 **Phone number coverage is mostly India-focused.** Indian mobile, US NANP, and UK mobile formats are covered. Anything outside those three regions is likely to be caught by column name matching rather than value pattern matching.
 
 **The LLM classification cache doesn't survive restarts.** To avoid calling Gemini repeatedly for identical columns across re-scans, results are cached in memory. That cache disappears when the backend process restarts, so the first scan after a restart hits the Gemini API for every column again.
 
-**No data retention visibility.** DataGuard tells you where PII lives, not how long it's been sitting there. A column storing Aadhaar numbers from 2019 looks exactly the same as one written yesterday. Retention policy enforcement needs to be handled separately.
+**Retention is shown, not enforced.** Each table now reports how old its data is (oldest/newest record, derived from a timestamp column on PostgreSQL or the `_id` ObjectId on MongoDB), so a table full of 2019 Aadhaar numbers stands out from one written yesterday. But that's visibility only — DataGuard surfaces the age, it doesn't delete or archive anything. Actual retention policy enforcement still has to happen on your side.

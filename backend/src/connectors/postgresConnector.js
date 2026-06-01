@@ -100,6 +100,85 @@ async function discoverSchema(pool) {
 }
 
 /**
+ * Discover all declared foreign-key relationships in the database.
+ * Returns [{ schema, table, column, refSchema, refTable, refColumn }].
+ *
+ * This is what powers cross-table awareness: a column that points at a table
+ * holding PII is an indirect identifier even if its own values look harmless.
+ */
+async function discoverForeignKeys(pool) {
+  const { rows } = await pool.query(`
+    SELECT
+      tc.table_schema  AS schema_name,
+      tc.table_name    AS table_name,
+      kcu.column_name  AS column_name,
+      ccu.table_schema AS ref_schema,
+      ccu.table_name   AS ref_table,
+      ccu.column_name  AS ref_column
+    FROM information_schema.table_constraints       tc
+    JOIN information_schema.key_column_usage        kcu
+      ON  kcu.constraint_name   = tc.constraint_name
+      AND kcu.constraint_schema = tc.constraint_schema
+    JOIN information_schema.constraint_column_usage ccu
+      ON  ccu.constraint_name   = tc.constraint_name
+      AND ccu.constraint_schema = tc.constraint_schema
+    WHERE tc.constraint_type = 'FOREIGN KEY'
+      AND tc.table_schema NOT IN ('pg_catalog','information_schema')
+  `);
+  return rows.map(r => ({
+    schema:    r.schema_name,
+    table:     r.table_name,
+    column:    r.column_name,
+    refSchema: r.ref_schema,
+    refTable:  r.ref_table,
+    refColumn: r.ref_column,
+  }));
+}
+
+// Column types that can carry a meaningful record timestamp
+const DATE_TYPES = new Set([
+  'timestamp with time zone', 'timestamp without time zone',
+  'timestamptz', 'timestamp', 'date',
+]);
+// Preferred timestamp column names, in priority order (underscores ignored)
+const DATE_COL_PREFERENCE = [
+  'createdat', 'inserted', 'insertedat', 'created', 'registeredat',
+  'signupdate', 'datecreated', 'timestamp', 'updatedat', 'modifiedat', 'date',
+];
+
+/**
+ * Find the data's date range for a table — how old the records actually are.
+ * Picks the most likely "record created" timestamp column (by name, else any
+ * date-typed column) and returns its MIN/MAX. Returns null if the table has no
+ * usable date column or is empty.
+ */
+async function getTableDateRange(pool, schema, table, columns) {
+  const dateCols = columns.filter(c => DATE_TYPES.has((c.dataType || '').toLowerCase()));
+  if (dateCols.length === 0) return null;
+
+  let chosen = null;
+  for (const pref of DATE_COL_PREFERENCE) {
+    chosen = dateCols.find(c => c.name.toLowerCase().replace(/_/g, '') === pref);
+    if (chosen) break;
+  }
+  if (!chosen) chosen = dateCols[0];
+
+  const safeSchema = sanitiseIdentifier(schema);
+  const safeTable  = sanitiseIdentifier(table);
+  const safeCol    = sanitiseIdentifier(chosen.name);
+
+  try {
+    const { rows: [r] } = await pool.query(
+      `SELECT MIN(${safeCol}) AS oldest, MAX(${safeCol}) AS newest FROM ${safeSchema}.${safeTable}`
+    );
+    if (!r || !r.oldest) return null;
+    return { oldest: r.oldest, newest: r.newest, column: chosen.name };
+  } catch {
+    return null; // permission denied, weird type, etc. — fail soft
+  }
+}
+
+/**
  * Returns a Set of table names that have not been modified since sinceTimestamp.
  *
  * Uses pg_stat_user_tables: n_mod_since_analyze = 0 means no rows changed since
@@ -218,4 +297,7 @@ function sanitiseIdentifier(name) {
   return `"${name}"`;
 }
 
-module.exports = { testConnection, createPool, discoverSchema, sampleTable, getUnchangedTables };
+module.exports = {
+  testConnection, createPool, discoverSchema, sampleTable,
+  getUnchangedTables, discoverForeignKeys, getTableDateRange,
+};

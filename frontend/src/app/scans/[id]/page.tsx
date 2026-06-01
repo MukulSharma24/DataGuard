@@ -14,11 +14,12 @@ import { Modal } from '@/components/ui/Modal';
 import {
   CheckCircle2, XCircle, RefreshCw, Upload,
   ChevronDown, ChevronRight, Eye, EyeOff, StopCircle,
-  Table2
+  Table2, CalendarClock, Link2
 } from 'lucide-react';
 
 interface Finding {
   id: string;
+  schema_name: string;
   table_name: string;
   field_path: string;
   pii_category: string;
@@ -28,6 +29,33 @@ interface Finding {
   sample_values_masked: string[];
   review_status: string;
   published: boolean;
+}
+
+const LINK_MARK = '🔗 Linked PII:';
+
+// Human-friendly age, e.g. "7.2 yrs", "9 mo", "12 d"
+function humanAge(days: number) {
+  if (days >= 365) return `${(days / 365).toFixed(1)} yrs`;
+  if (days >= 30)  return `${Math.round(days / 30)} mo`;
+  return `${days} d`;
+}
+
+function RetentionBadge({ ret }: { ret: any }) {
+  if (!ret) return null;
+  const oldest = new Date(ret.oldest);
+  const newest = new Date(ret.newest);
+  const fmt = (d: Date) => d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+  const range = fmt(oldest) === fmt(newest) ? fmt(oldest) : `${fmt(oldest)} – ${fmt(newest)}`;
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 text-[11px] font-medium bg-slate-50 text-slate-500 border border-slate-200/70 rounded-full px-2 py-0.5"
+      title={`Records span ${range}. Oldest data is ~${humanAge(ret.ageDays)} old (based on "${ret.column}").`}
+    >
+      <CalendarClock size={11} className="text-slate-400" />
+      {range}
+      <span className="text-slate-400">· {humanAge(ret.ageDays)} old</span>
+    </span>
+  );
 }
 
 function SampleChip({ value }: { value: string }) {
@@ -98,6 +126,14 @@ function FindingRow({ finding, onReview }: { finding: Finding; onReview: (f: Fin
               className={`${PII_CATEGORY_COLOURS[finding.pii_category] ?? 'bg-slate-100 text-slate-600'} border-transparent text-[10px]`}
               size="sm"
             />
+            {finding.detection_reason?.includes(LINK_MARK) && (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-full px-1.5 py-0.5"
+                title="Indirect identifier — foreign key to a table holding personal data"
+              >
+                <Link2 size={10} /> Linked
+              </span>
+            )}
           </div>
           <p className="text-xs text-slate-400 mt-0.5 line-clamp-1 leading-relaxed">
             {finding.detection_reason}
@@ -208,6 +244,9 @@ export default function ScanDetailPage({ params }: { params: { id: string } }) {
     (acc[f.table_name] = acc[f.table_name] ?? []).push(f);
     return acc;
   }, {});
+
+  const retentionMap  = scan?.classifier_stats?.retention ?? {};
+  const linkedCount   = findings.filter(f => f.detection_reason?.includes(LINK_MARK)).length;
 
   const confirmedUnpublished = findings.filter(
     f => f.review_status === 'confirmed' && !f.published
@@ -361,11 +400,19 @@ export default function ScanDetailPage({ params }: { params: { id: string } }) {
 
       {/* Findings by table */}
       <div className="space-y-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <h2 className="text-sm font-semibold text-slate-900">Findings by Table</h2>
           <span className="text-xs text-slate-400 font-medium">
             ({findings.length} total)
           </span>
+          {linkedCount > 0 && (
+            <span
+              className="inline-flex items-center gap-1 text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-full px-2 py-0.5"
+              title="Indirect identifiers — columns that are foreign keys to tables holding personal data"
+            >
+              <Link2 size={11} /> {linkedCount} linked
+            </span>
+          )}
         </div>
 
         {Object.keys(byTable).length === 0 ? (
@@ -380,27 +427,29 @@ export default function ScanDetailPage({ params }: { params: { id: string } }) {
           </Card>
         ) : Object.entries(byTable).map(([table, tFindings]) => {
           const expanded = expandedTables.has(table);
+          const ret = retentionMap[`${tFindings[0]?.schema_name}.${table}`];
           return (
             <Card key={table}>
               <button
-                className="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50/80 transition-colors text-left group"
+                className="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50/80 transition-colors text-left group gap-3"
                 onClick={() => setExpandedTables(prev => {
                   const next = new Set(prev);
                   next.has(table) ? next.delete(table) : next.add(table);
                   return next;
                 })}
               >
-                <div className="flex items-center gap-2.5">
+                <div className="flex items-center gap-2.5 min-w-0">
                   {expanded
                     ? <ChevronDown size={15} className="text-slate-400 shrink-0" />
                     : <ChevronRight size={15} className="text-slate-400 shrink-0" />
                   }
-                  <span className="font-mono text-sm font-semibold text-slate-800">{table}</span>
-                  <span className="text-xs text-slate-400 font-medium">
+                  <span className="font-mono text-sm font-semibold text-slate-800 shrink-0">{table}</span>
+                  <span className="text-xs text-slate-400 font-medium shrink-0">
                     {tFindings.length} field{tFindings.length !== 1 ? 's' : ''}
                   </span>
+                  <RetentionBadge ret={ret} />
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 shrink-0">
                   {['HIGH', 'MEDIUM', 'LOW'].map(lvl => {
                     const cnt = tFindings.filter(f => f.confidence_level === lvl).length;
                     if (!cnt) return null;
