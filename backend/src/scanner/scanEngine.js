@@ -44,30 +44,83 @@ async function runWithConcurrency(tasks, limit) {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-const SCAN_CONCURRENCY = 4;
+const SCAN_CONCURRENCY  = 4;
+const MONGO_CONCURRENCY = 4;
+// Max concurrent Gemini calls — prevents hitting free-tier RPM limits.
+// Each slot does ~2-4s of LLM work, so 3 slots ≈ 45-90 RPM which fits paid tiers.
+const LLM_CONCURRENCY   = 3;
+
+// ---------------------------------------------------------------------------
+// LLM semaphore — caps simultaneous Gemini calls across all concurrent tables
+// ---------------------------------------------------------------------------
+
+class Semaphore {
+  constructor(n) { this._n = n; this._queue = []; }
+  async acquire() {
+    if (this._n > 0) { this._n--; return; }
+    await new Promise(resolve => this._queue.push(resolve));
+  }
+  release() {
+    this._n++;
+    if (this._queue.length) { this._n--; this._queue.shift()(); }
+  }
+}
+const _llmSem = new Semaphore(LLM_CONCURRENCY);
+
+// ---------------------------------------------------------------------------
+// Buffered logger — accumulates lines in memory, flushes to DB in one UPDATE
+// every LOG_FLUSH_THRESHOLD lines or when flushLog() is called explicitly.
+// Cuts ~150 individual UPDATE round-trips down to a handful per scan.
+// ---------------------------------------------------------------------------
+
+const LOG_FLUSH_THRESHOLD = 10;
+const _logBuffers = new Map(); // scanRunId → string[]
 
 async function appendLog(scanRunId, message) {
   const line = `[${new Date().toISOString()}] ${message}`;
+  if (!_logBuffers.has(scanRunId)) _logBuffers.set(scanRunId, []);
+  const buf = _logBuffers.get(scanRunId);
+  buf.push(line);
+  if (buf.length >= LOG_FLUSH_THRESHOLD) await flushLog(scanRunId);
+}
+
+async function flushLog(scanRunId) {
+  const buf = _logBuffers.get(scanRunId);
+  if (!buf || buf.length === 0) return;
+  _logBuffers.delete(scanRunId);
   await query(
-    `UPDATE scan_runs SET log = log || $1 || E'\n' WHERE id = $2`,
-    [line, scanRunId]
+    `UPDATE scan_runs SET log = log || $1 WHERE id = $2`,
+    [buf.join('\n') + '\n', scanRunId]
   );
 }
 
-async function saveFinding(scanRunId, sourceId, finding, schema, table) {
+// ---------------------------------------------------------------------------
+// Batch finding writer — single multi-row INSERT per table instead of N INSERTs.
+// Eliminates the biggest source of round-trip overhead on remote app databases.
+// ---------------------------------------------------------------------------
+
+async function saveFindings(scanRunId, sourceId, findings, schema, table) {
+  if (findings.length === 0) return;
+  const placeholders = [];
+  const params = [];
+  let p = 1;
+  for (const f of findings) {
+    placeholders.push(`($${p},$${p+1},$${p+2},$${p+3},$${p+4},$${p+5},$${p+6},$${p+7},$${p+8},$${p+9})`);
+    params.push(
+      scanRunId, sourceId, schema, table,
+      f.fieldPath, f.piiCategory,
+      f.confidenceScore, f.confidenceLevel,
+      f.detectionReason, JSON.stringify(f.sampleValuesMasked)
+    );
+    p += 10;
+  }
   await query(
     `INSERT INTO findings
        (scan_run_id, source_id, schema_name, table_name, field_path,
         pii_category, confidence_score, confidence_level,
         detection_reason, sample_values_masked)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-    [
-      scanRunId, sourceId, schema, table,
-      finding.fieldPath, finding.piiCategory,
-      finding.confidenceScore, finding.confidenceLevel,
-      finding.detectionReason,
-      JSON.stringify(finding.sampleValuesMasked),
-    ]
+     VALUES ${placeholders.join(',')}`,
+    params
   );
 }
 
@@ -159,7 +212,6 @@ async function scanPostgres(scanRunId, sourceId, connConfig, profileConfig) {
             pool, schema, table.name, table.columns, batchSize, sampleSize
           );
 
-          // Track rows sampled for metrics
           rowsSampled += fieldSamples.reduce((sum, f) => sum + f.samples.length, 0);
 
           const patternFindings = classifyFields(fieldSamples);
@@ -167,23 +219,28 @@ async function scanPostgres(scanRunId, sourceId, connConfig, profileConfig) {
           classifierStats.patternDetected += patternFindings.length;
 
           if (isLLMEnabled()) {
-            const llmMap = await classifyTableWithLLM(schema, table.name, fieldSamples);
-            findings = mergeResults(patternFindings, llmMap, fieldSamples);
-            // Net new findings added by LLM. Can be negative when LLM correctly drops
-            // LOW-confidence false positives — clamp to 0 so the stat stays meaningful.
-            const llmAdded = Math.max(0, findings.length - patternFindings.length);
-            classifierStats.llmAdded += llmAdded;
-            if (llmAdded > 0) {
-              await appendLog(scanRunId, `    🤖 LLM added ${llmAdded} additional finding(s)`);
+            // Semaphore caps concurrent Gemini calls within RPM budget
+            await _llmSem.acquire();
+            try {
+              const llmMap = await classifyTableWithLLM(schema, table.name, fieldSamples);
+              findings = mergeResults(patternFindings, llmMap, fieldSamples);
+              const llmAdded = Math.max(0, findings.length - patternFindings.length);
+              classifierStats.llmAdded += llmAdded;
+              if (llmAdded > 0) {
+                await appendLog(scanRunId, `    🤖 LLM added ${llmAdded} additional finding(s)`);
+              }
+            } finally {
+              _llmSem.release();
             }
           }
 
-          for (const finding of findings) {
-            await saveFinding(scanRunId, sourceId, finding, schema, table.name);
-            findingsCount++;
-            if (finding.confidenceLevel === 'HIGH')   classifierStats.highCount++;
-            if (finding.confidenceLevel === 'MEDIUM') classifierStats.mediumCount++;
-            if (finding.confidenceLevel === 'LOW')    classifierStats.lowCount++;
+          // Single multi-row INSERT per table — eliminates N round-trips
+          await saveFindings(scanRunId, sourceId, findings, schema, table.name);
+          findingsCount += findings.length;
+          for (const f of findings) {
+            if (f.confidenceLevel === 'HIGH')   classifierStats.highCount++;
+            if (f.confidenceLevel === 'MEDIUM') classifierStats.mediumCount++;
+            if (f.confidenceLevel === 'LOW')    classifierStats.lowCount++;
           }
 
           tablesScanned++;
@@ -196,6 +253,7 @@ async function scanPostgres(scanRunId, sourceId, connConfig, profileConfig) {
       });
 
       await runWithConcurrency(tableTasks, SCAN_CONCURRENCY);
+      await flushLog(scanRunId); // flush buffered log lines after each schema wave
       tablesScanned += unchanged.size;
     }
   } finally {
@@ -238,14 +296,14 @@ async function scanMongodb(scanRunId, sourceId, connConfig, profileConfig) {
 
   await appendLog(scanRunId, `Found ${filtered.length} collection(s): ${filtered.map(c => c.name).join(', ')}`);
 
-  for (const collection of filtered) {
-    if (isCancelled(scanRunId)) break;
+  const collectionTasks = filtered.map(collection => async () => {
+    if (isCancelled(scanRunId)) return;
 
     try {
       if (collection.error) throw new Error(collection.error);
       if (collection.fields.length === 0) {
         await appendLog(scanRunId, `  → ${collection.name}: empty, skipped`);
-        continue;
+        return;
       }
 
       rowsSampled += collection.fields.reduce((sum, f) => sum + (f.samples?.length ?? 0), 0);
@@ -257,21 +315,27 @@ async function scanMongodb(scanRunId, sourceId, connConfig, profileConfig) {
       classifierStats.patternDetected += patternFindings.length;
 
       if (isLLMEnabled()) {
-        const llmMap = await classifyTableWithLLM('default', collection.name, collection.fields);
-        findings = mergeResults(patternFindings, llmMap, collection.fields);
-        const llmAdded = Math.max(0, findings.length - patternFindings.length);
-        classifierStats.llmAdded += llmAdded;
-        if (llmAdded > 0) {
-          await appendLog(scanRunId, `    🤖 LLM added ${llmAdded} additional finding(s)`);
+        await _llmSem.acquire();
+        try {
+          const llmMap = await classifyTableWithLLM('default', collection.name, collection.fields);
+          findings = mergeResults(patternFindings, llmMap, collection.fields);
+          const llmAdded = Math.max(0, findings.length - patternFindings.length);
+          classifierStats.llmAdded += llmAdded;
+          if (llmAdded > 0) {
+            await appendLog(scanRunId, `    🤖 LLM added ${llmAdded} additional finding(s)`);
+          }
+        } finally {
+          _llmSem.release();
         }
       }
 
-      for (const finding of findings) {
-        await saveFinding(scanRunId, sourceId, finding, 'default', collection.name);
-        findingsCount++;
-        if (finding.confidenceLevel === 'HIGH')   classifierStats.highCount++;
-        if (finding.confidenceLevel === 'MEDIUM') classifierStats.mediumCount++;
-        if (finding.confidenceLevel === 'LOW')    classifierStats.lowCount++;
+      // Single multi-row INSERT per collection
+      await saveFindings(scanRunId, sourceId, findings, 'default', collection.name);
+      findingsCount += findings.length;
+      for (const f of findings) {
+        if (f.confidenceLevel === 'HIGH')   classifierStats.highCount++;
+        if (f.confidenceLevel === 'MEDIUM') classifierStats.mediumCount++;
+        if (f.confidenceLevel === 'LOW')    classifierStats.lowCount++;
       }
 
       tablesScanned++;
@@ -281,7 +345,10 @@ async function scanMongodb(scanRunId, sourceId, connConfig, profileConfig) {
       await appendLog(scanRunId, `    ✗ Error scanning collection ${collection.name}: ${err.message}`);
       logger.warn(`Scan error in collection ${collection.name}`, { message: err.message, scanRunId });
     }
-  }
+  });
+
+  await runWithConcurrency(collectionTasks, MONGO_CONCURRENCY);
+  await flushLog(scanRunId);
 
   return { tablesScanned, findingsCount, rowsSampled, classifierStats, partialFailure };
 }
@@ -387,6 +454,7 @@ async function runScan(scanRunId, sourceId, connConfig, sourceType, profileConfi
       `Scan ${finalStatus} — ${result.tablesScanned} table(s), ${result.findingsCount} finding(s), ` +
       `${result.rowsSampled} rows sampled, ${rowsPerSec} rows/sec, ${durationMs}ms`
     );
+    await flushLog(scanRunId); // ensure final summary line is persisted
     logger.info(`Scan run ${scanRunId} ${finalStatus}`, {
       tablesScanned:   result.tablesScanned,
       findingsCount:   result.findingsCount,
@@ -400,6 +468,7 @@ async function runScan(scanRunId, sourceId, connConfig, sourceType, profileConfi
     logger.error(`Scan run ${scanRunId} failed`, { message: err.message });
     await updateScanStatus(scanRunId, 'failed', { error: err.message }).catch(() => {});
     await appendLog(scanRunId, `FATAL: ${err.message}`).catch(() => {});
+    await flushLog(scanRunId).catch(() => {}); // flush error line even on crash path
   }
 }
 

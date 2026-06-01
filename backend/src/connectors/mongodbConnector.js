@@ -83,6 +83,59 @@ function normalizeArrayPath(path) {
   return path.replace(/\.\d+(?=\.|$)/g, '');
 }
 
+/**
+ * Sample documents from a collection using _id-range queries wherever possible.
+ *
+ * Strategy:
+ *  - Small collections (≤ 2× limit): sequential scan sorted by _id (deterministic, fast)
+ *  - Large collections with ObjectId _id: range-based begin/middle/end slices using
+ *    ObjectId.createFromTime() — all three fetches use the _id index, zero full-scan penalty
+ *  - Large collections with non-ObjectId _id: fall back to sort+skip, but with _id sort
+ *    so at least the order is deterministic across runs
+ */
+async function sampleCollection(db, name, total) {
+  const { ObjectId } = require('mongodb');
+  const slice = Math.ceil(SAMPLE_LIMIT / 3);
+
+  if (total <= SAMPLE_LIMIT * 2) {
+    return db.collection(name).find({}).sort({ _id: 1 }).limit(SAMPLE_LIMIT).toArray();
+  }
+
+  // Fetch anchor documents (first and last) to determine _id range
+  const [firstDoc, lastDoc] = await Promise.all([
+    db.collection(name).findOne({}, { sort: { _id: 1 }, projection: { _id: 1 } }),
+    db.collection(name).findOne({}, { sort: { _id: -1 }, projection: { _id: 1 } }),
+  ]);
+
+  if (firstDoc && lastDoc && firstDoc._id instanceof ObjectId) {
+    // ObjectId encodes a Unix timestamp in the first 4 bytes.
+    // Interpolate the midpoint timestamp → construct a mid ObjectId → O(1) range query,
+    // no .skip() needed so no server-side sequential scan of half the collection.
+    const t1    = firstDoc._id.getTimestamp().getTime();
+    const t2    = lastDoc._id.getTimestamp().getTime();
+    const midId = ObjectId.createFromTime(Math.floor((t1 + t2) / 2 / 1000));
+
+    const [startDocs, midDocs, endDocs] = await Promise.all([
+      db.collection(name).find({}).sort({ _id: 1 }).limit(slice).toArray(),
+      db.collection(name).find({ _id: { $gte: midId } }).sort({ _id: 1 }).limit(slice).toArray(),
+      // Fetch end slice in reverse then flip — avoids a large skip to the tail
+      db.collection(name).find({}).sort({ _id: -1 }).limit(slice).toArray(),
+    ]);
+
+    return [...startDocs, ...midDocs, ...endDocs.reverse()];
+  }
+
+  // Fallback for non-ObjectId primary keys: use skip but at least sort for determinism
+  const midSkip = Math.max(0, Math.floor(total / 2) - Math.floor(slice / 2));
+  const endSkip = Math.max(midSkip + slice, total - slice);
+  const [startDocs, midDocs, endDocs] = await Promise.all([
+    db.collection(name).find({}).sort({ _id: 1 }).limit(slice).toArray(),
+    db.collection(name).find({}).sort({ _id: 1 }).skip(midSkip).limit(slice).toArray(),
+    db.collection(name).find({}).sort({ _id: 1 }).skip(endSkip).limit(slice).toArray(),
+  ]);
+  return [...startDocs, ...midDocs, ...endDocs];
+}
+
 async function discoverCollections(config) {
   const client = buildClient(config);
   try {
@@ -96,23 +149,8 @@ async function discoverCollections(config) {
     for (const info of collectionInfos) {
       const name = info.name;
       try {
-        // Distributed sampling: beginning + middle + end (mirrors PostgreSQL strategy).
-        // Small collections (≤ 2× limit) just read sequentially.
         const total = await db.collection(name).estimatedDocumentCount();
-        let docs;
-        if (total <= SAMPLE_LIMIT * 2) {
-          docs = await db.collection(name).find({}).limit(SAMPLE_LIMIT).toArray();
-        } else {
-          const slice     = Math.ceil(SAMPLE_LIMIT / 3);
-          const midSkip   = Math.max(0, Math.floor(total / 2) - Math.floor(slice / 2));
-          const endSkip   = Math.max(midSkip + slice, total - slice);
-          const [startDocs, midDocs, endDocs] = await Promise.all([
-            db.collection(name).find({}).limit(slice).toArray(),
-            db.collection(name).find({}).skip(midSkip).limit(slice).toArray(),
-            db.collection(name).find({}).skip(endSkip).limit(slice).toArray(),
-          ]);
-          docs = [...startDocs, ...midDocs, ...endDocs];
-        }
+        const docs  = await sampleCollection(db, name, total);
 
         if (docs.length === 0) {
           results.push({ name, fields: [] });

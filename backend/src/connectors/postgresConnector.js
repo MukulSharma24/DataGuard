@@ -51,53 +51,51 @@ async function testConnection(config) {
 
 /**
  * Discover all schemas (excluding system schemas) and their tables + columns.
+ * Single JOIN query replaces the old N+1 loop (1 per schema + 1 per table).
  * Accepts a pg.Pool — caller is responsible for pool lifecycle.
  */
 async function discoverSchema(pool) {
   logger.info('PostgreSQL — discovering schema');
 
-  const schemasRes = await pool.query(`
-    SELECT schema_name
-    FROM information_schema.schemata
-    WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast', 'pg_temp_1', 'pg_toast_temp_1')
-      AND schema_name NOT LIKE 'pg_%'
-    ORDER BY schema_name
+  const { rows } = await pool.query(`
+    SELECT
+      t.table_schema  AS schema_name,
+      t.table_name,
+      c.column_name,
+      c.data_type,
+      c.is_nullable,
+      c.ordinal_position
+    FROM information_schema.tables  t
+    JOIN information_schema.columns c
+      ON  c.table_schema = t.table_schema
+      AND c.table_name   = t.table_name
+    WHERE t.table_schema NOT IN ('pg_catalog','information_schema','pg_toast','pg_temp_1','pg_toast_temp_1')
+      AND t.table_schema NOT LIKE 'pg_%'
+      AND t.table_type = 'BASE TABLE'
+    ORDER BY t.table_schema, t.table_name, c.ordinal_position
   `);
 
-  const schemas = [];
-
-  for (const { schema_name: schema } of schemasRes.rows) {
-    const tablesRes = await pool.query(`
-      SELECT table_name
-      FROM information_schema.tables
-      WHERE table_schema = $1
-        AND table_type = 'BASE TABLE'
-      ORDER BY table_name
-    `, [schema]);
-
-    const tables = [];
-
-    for (const { table_name: tableName } of tablesRes.rows) {
-      const colsRes = await pool.query(`
-        SELECT column_name, data_type, is_nullable
-        FROM information_schema.columns
-        WHERE table_schema = $1 AND table_name = $2
-        ORDER BY ordinal_position
-      `, [schema, tableName]);
-
-      tables.push({
-        name:    tableName,
-        columns: colsRes.rows.map(r => ({
-          name:       r.column_name,
-          dataType:   r.data_type,
-          isNullable: r.is_nullable === 'YES',
-        })),
-      });
-    }
-
-    schemas.push({ schema, tables });
+  // Group flat rows into nested schemas → tables → columns
+  const schemaMap = new Map();
+  for (const row of rows) {
+    if (!schemaMap.has(row.schema_name)) schemaMap.set(row.schema_name, new Map());
+    const tableMap = schemaMap.get(row.schema_name);
+    if (!tableMap.has(row.table_name)) tableMap.set(row.table_name, []);
+    tableMap.get(row.table_name).push({
+      name:       row.column_name,
+      dataType:   row.data_type,
+      isNullable: row.is_nullable === 'YES',
+    });
   }
 
+  const schemas = [];
+  for (const [schema, tableMap] of schemaMap) {
+    const tables = [];
+    for (const [tableName, columns] of tableMap) {
+      tables.push({ name: tableName, columns });
+    }
+    schemas.push({ schema, tables });
+  }
   return schemas;
 }
 

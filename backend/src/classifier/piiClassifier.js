@@ -22,9 +22,11 @@
 const VALUE_PATTERNS = {
   EMAIL: /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/,
 
-  // Indian mobile: optional +91 or 91 prefix, then 6-9 leading digit, 9 more
-  // Also accepts international format: +[country][number]
-  PHONE: /^(\+91|91|0)?[6-9]\d{9}$|^\+[1-9]\d{6,14}$/,
+  // Indian mobile: optional +91/91/0 prefix, 6-9 leading digit, 9 more digits
+  // International E.164: +[country_code][number]
+  // US/Canada NANP: (555) 123-4567 | 555-123-4567 | 555.123.4567
+  // UK mobile: 07xxx xxxxxx | +44 7xxx xxxxxx | 0044 7xxx xxxxxx
+  PHONE: /^(\+91|91|0)?[6-9]\d{9}$|^\+[1-9]\d{6,14}$|^\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}$|^(\+44\s?|0044\s?)?07\d{3}[\s\-]?\d{6}$/,
 
   // PAN card: AAAAA9999A
   PAN: /^[A-Z]{5}[0-9]{4}[A-Z]$/,
