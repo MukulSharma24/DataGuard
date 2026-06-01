@@ -21,19 +21,22 @@ const BAR_COLOURS = [
   '#14b8a6','#f43f5e','#3b82f6','#84cc16','#06b6d4','#a855f7',
 ];
 
-function StatCard({ label, value, icon: Icon, bg, fg }: {
-  label: string; value: any; icon: any; bg: string; fg: string;
+function StatCard({ label, value, icon: Icon, bg, fg, accent }: {
+  label: string; value: any; icon: any; bg: string; fg: string; accent: string;
 }) {
   return (
-    <Card className="hover:shadow-card-md transition-shadow duration-200">
+    <Card className="hover:shadow-card-md transition-all duration-200">
+      <div className={`h-0.5 ${accent}`} />
       <CardBody className="p-5">
-        <div className={`w-9 h-9 rounded-lg flex items-center justify-center mb-4 ${bg}`}>
-          <Icon size={16} className={fg} />
+        <div className="flex items-start justify-between mb-4">
+          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${bg}`}>
+            <Icon size={14} className={fg} />
+          </div>
         </div>
-        <p className="text-2xl font-bold text-slate-900 tabular-nums tracking-tight leading-none">
-          {value ?? '—'}
+        <p className="text-[28px] font-bold text-slate-900 tabular-nums tracking-tight leading-none">
+          {value ?? <span className="text-slate-300 text-2xl">—</span>}
         </p>
-        <p className="text-xs text-slate-500 mt-2 font-medium leading-tight">{label}</p>
+        <p className="text-xs text-slate-500 mt-2.5 font-medium">{label}</p>
       </CardBody>
     </Card>
   );
@@ -77,7 +80,7 @@ export default function OverviewPage() {
   return (
     <div className="p-8 space-y-8 animate-fadeIn">
       {/* Page header */}
-      <div>
+      <div className="pb-5 border-b border-slate-100">
         <h1 className="text-[22px] font-bold text-slate-900 tracking-tight">Overview</h1>
         <p className="text-sm text-slate-500 mt-1">Your data privacy posture at a glance</p>
       </div>
@@ -88,12 +91,12 @@ export default function OverviewPage() {
           Array.from({ length: 6 }).map((_, i) => <SkeletonStatCard key={i} />)
         ) : (
           <>
-            <StatCard label="Data Sources"      value={stats?.total_sources}       icon={Database}     bg="bg-indigo-50"  fg="text-indigo-600" />
-            <StatCard label="Scans Run"         value={stats?.total_scans}         icon={ScanLine}     bg="bg-sky-50"     fg="text-sky-600" />
-            <StatCard label="PII Fields Found"  value={stats?.total_findings}      icon={ShieldAlert}  bg="bg-rose-50"    fg="text-rose-600" />
-            <StatCard label="Confirmed"         value={stats?.confirmed_findings}  icon={CheckCircle2} bg="bg-emerald-50" fg="text-emerald-600" />
-            <StatCard label="Unreviewed"        value={stats?.unreviewed_findings} icon={Clock}        bg="bg-amber-50"   fg="text-amber-600" />
-            <StatCard label="Catalogue Entries" value={stats?.catalogue_entries}   icon={TrendingUp}   bg="bg-violet-50"  fg="text-violet-600" />
+            <StatCard label="Data Sources"      value={stats?.total_sources}       icon={Database}     bg="bg-indigo-50"  fg="text-indigo-600"  accent="bg-indigo-500" />
+            <StatCard label="Scans Run"         value={stats?.total_scans}         icon={ScanLine}     bg="bg-sky-50"     fg="text-sky-600"     accent="bg-sky-500" />
+            <StatCard label="PII Fields Found"  value={stats?.total_findings}      icon={ShieldAlert}  bg="bg-rose-50"    fg="text-rose-600"    accent="bg-rose-500" />
+            <StatCard label="Confirmed"         value={stats?.confirmed_findings}  icon={CheckCircle2} bg="bg-emerald-50" fg="text-emerald-600" accent="bg-emerald-500" />
+            <StatCard label="Unreviewed"        value={stats?.unreviewed_findings} icon={Clock}        bg="bg-amber-50"   fg="text-amber-600"   accent="bg-amber-500" />
+            <StatCard label="Catalogue Entries" value={stats?.catalogue_entries}   icon={TrendingUp}   bg="bg-violet-50"  fg="text-violet-600"  accent="bg-violet-500" />
           </>
         )}
       </div>
@@ -132,9 +135,15 @@ export default function OverviewPage() {
               <Link
                 key={scan.id}
                 href={`/scans/${scan.id}`}
-                className="flex items-center justify-between px-5 py-3.5 hover:bg-slate-50 transition-colors group"
+                className="flex items-center gap-3 px-5 py-3.5 hover:bg-slate-50 transition-colors group"
               >
-                <div className="min-w-0">
+                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                  scan.status === 'completed' ? 'bg-emerald-500' :
+                  scan.status === 'running'   ? 'bg-blue-500' :
+                  scan.status === 'failed'    ? 'bg-rose-500' :
+                  scan.status === 'partial'   ? 'bg-amber-500' : 'bg-slate-300'
+                }`} />
+                <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-slate-800 group-hover:text-slate-900 truncate">
                     {scan.source_name}
                   </p>
@@ -142,7 +151,7 @@ export default function OverviewPage() {
                     {scan.profile_name} · {formatDate(scan.started_at)}
                   </p>
                 </div>
-                <div className="flex items-center gap-2.5 ml-3 shrink-0">
+                <div className="flex items-center gap-2.5 shrink-0">
                   <span className="text-xs text-slate-400 tabular-nums">
                     {scan.findings_count ?? 0} findings
                   </span>

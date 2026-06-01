@@ -52,7 +52,7 @@ export default function CataloguePage() {
   return (
     <div className="p-8 space-y-6 animate-fadeIn">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-4 pb-5 border-b border-slate-100">
         <div>
           <h1 className="text-[22px] font-bold text-slate-900 tracking-tight">Data Catalogue</h1>
           <p className="text-sm text-slate-500 mt-1 max-w-lg leading-relaxed">
@@ -78,14 +78,14 @@ export default function CataloguePage() {
       </div>
 
       {/* View toggle */}
-      <div className="flex gap-1 p-1 bg-slate-100 rounded-lg w-fit">
+      <div className="flex gap-1 p-1 bg-slate-100/80 rounded-xl w-fit border border-slate-200/60">
         {(['published', 'pending'] as View[]).map(v => (
           <button
             key={v}
             onClick={() => setView(v)}
             className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-150 ${
               view === v
-                ? 'bg-white text-slate-900 shadow-sm'
+                ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/60'
                 : 'text-slate-500 hover:text-slate-700'
             }`}
           >

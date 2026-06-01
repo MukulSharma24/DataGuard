@@ -48,3 +48,19 @@ input, select, textarea {
   0%   { background-position: -200% 0; }
   100% { background-position:  200% 0; }
 }
+
+/* Better text selection */
+::selection {
+  background: #6366f1;
+  color: white;
+}
+
+/* Page header separator utility */
+.page-header-border {
+  @apply pb-5 border-b border-slate-100;
+}
+
+/* Mono chip */
+.mono-chip {
+  @apply font-mono text-[11px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200;
+}

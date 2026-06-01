@@ -32,7 +32,7 @@ export default function ScansPage() {
   return (
     <div className="p-8 space-y-6 animate-fadeIn">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between pb-5 border-b border-slate-100">
         <div>
           <h1 className="text-[22px] font-bold text-slate-900 tracking-tight">Scan Runs</h1>
           <p className="text-sm text-slate-500 mt-1">History of all scan executions</p>
@@ -91,8 +91,15 @@ export default function ScansPage() {
               <Link
                 key={scan.id}
                 href={`/scans/${scan.id}`}
-                className="flex items-center justify-between px-5 py-4 hover:bg-slate-50 transition-colors group"
+                className="flex items-center gap-3 px-5 py-4 hover:bg-slate-50/80 transition-colors group"
               >
+                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                  scan.status === 'completed' ? 'bg-emerald-500' :
+                  scan.status === 'running'   ? 'bg-blue-500' :
+                  scan.status === 'failed'    ? 'bg-rose-500' :
+                  scan.status === 'partial'   ? 'bg-amber-500' :
+                  scan.status === 'cancelled' ? 'bg-slate-400' : 'bg-slate-300'
+                }`} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="font-semibold text-slate-900 text-sm group-hover:text-indigo-700 transition-colors truncate">

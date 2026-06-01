@@ -82,41 +82,48 @@ function SampleValues({ values }: { values: string[] }) {
 }
 
 function FindingRow({ finding, onReview }: { finding: Finding; onReview: (f: Finding) => void }) {
+  const leftBar =
+    finding.confidence_level === 'HIGH'   ? 'bg-emerald-400' :
+    finding.confidence_level === 'MEDIUM' ? 'bg-amber-400'   : 'bg-slate-200';
+
   return (
-    <div className="flex items-start gap-4 px-5 py-3 hover:bg-slate-50/70 border-b border-slate-100 last:border-0 transition-colors">
-      <div className="flex-1 min-w-0 pt-0.5">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-mono text-[13px] text-slate-800 font-medium">{finding.field_path}</span>
+    <div className="flex border-b border-slate-50 last:border-0 hover:bg-slate-50/60 transition-colors group">
+      <div className={`w-[3px] shrink-0 ${leftBar} rounded-r`} />
+      <div className="flex items-start gap-4 px-5 py-3.5 flex-1 min-w-0">
+        <div className="flex-1 min-w-0 pt-0.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-mono text-[13px] text-slate-800 font-medium">{finding.field_path}</span>
+            <Badge
+              label={finding.pii_category}
+              className={`${PII_CATEGORY_COLOURS[finding.pii_category] ?? 'bg-slate-100 text-slate-600'} border-transparent text-[10px]`}
+              size="sm"
+            />
+          </div>
+          <p className="text-xs text-slate-400 mt-0.5 line-clamp-1 leading-relaxed">
+            {finding.detection_reason}
+          </p>
+        </div>
+        <div className="flex items-center gap-2.5 shrink-0">
+          <SampleValues values={finding.sample_values_masked} />
           <Badge
-            label={finding.pii_category}
-            className={`${PII_CATEGORY_COLOURS[finding.pii_category] ?? 'bg-slate-100 text-slate-600'} border-transparent text-[10px]`}
+            label={finding.confidence_level}
+            className={CONFIDENCE_COLOURS[finding.confidence_level] ?? ''}
             size="sm"
           />
-        </div>
-        <p className="text-xs text-slate-400 mt-0.5 line-clamp-1 leading-relaxed">
-          {finding.detection_reason}
-        </p>
-      </div>
-      <div className="flex items-center gap-2.5 shrink-0">
-        <SampleValues values={finding.sample_values_masked} />
-        <Badge
-          label={finding.confidence_level}
-          className={CONFIDENCE_COLOURS[finding.confidence_level] ?? ''}
-          size="sm"
-        />
-        <Badge
-          label={finding.review_status}
-          className={REVIEW_COLOURS[finding.review_status] ?? ''}
-          size="sm"
-        />
-        <div className="w-16 flex justify-end">
-          {finding.review_status === 'unreviewed' ? (
-            <Button variant="secondary" size="sm" onClick={() => onReview(finding)}>
-              Review
-            </Button>
-          ) : (
-            <span className="text-xs text-slate-300">—</span>
-          )}
+          <Badge
+            label={finding.review_status}
+            className={REVIEW_COLOURS[finding.review_status] ?? ''}
+            size="sm"
+          />
+          <div className="w-16 flex justify-end">
+            {finding.review_status === 'unreviewed' ? (
+              <Button variant="secondary" size="sm" onClick={() => onReview(finding)}>
+                Review
+              </Button>
+            ) : (
+              <span className="text-xs text-slate-300">—</span>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -242,7 +249,7 @@ export default function ScanDetailPage({ params }: { params: { id: string } }) {
   return (
     <div className="p-8 space-y-6 animate-fadeIn">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-4 pb-5 border-b border-slate-100">
         <div>
           <div className="flex items-center gap-2.5 flex-wrap">
             <h1 className="text-[22px] font-bold text-slate-900 tracking-tight">{scan.source_name}</h1>
@@ -376,7 +383,7 @@ export default function ScanDetailPage({ params }: { params: { id: string } }) {
           return (
             <Card key={table}>
               <button
-                className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-slate-50 rounded-xl transition-colors text-left"
+                className="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50/80 transition-colors text-left group"
                 onClick={() => setExpandedTables(prev => {
                   const next = new Set(prev);
                   next.has(table) ? next.delete(table) : next.add(table);

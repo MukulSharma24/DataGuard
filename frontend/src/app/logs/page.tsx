@@ -51,7 +51,7 @@ export default function LogsPage() {
   return (
     <div className="p-8 space-y-6 animate-fadeIn">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between pb-5 border-b border-slate-100">
         <div>
           <h1 className="text-[22px] font-bold text-slate-900 tracking-tight">Logs</h1>
           <p className="text-sm text-slate-500 mt-1">

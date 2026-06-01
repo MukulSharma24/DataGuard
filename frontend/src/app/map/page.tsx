@@ -56,7 +56,7 @@ export default function DataMapPage() {
   return (
     <div className="p-8 space-y-6 animate-fadeIn">
       {/* Header */}
-      <div>
+      <div className="pb-5 border-b border-slate-100">
         <h1 className="text-[22px] font-bold text-slate-900 tracking-tight">Data Map</h1>
         <p className="text-sm text-slate-500 mt-1">
           Visual layout of discovered PII across your data sources
@@ -164,7 +164,7 @@ export default function DataMapPage() {
                       {fields.map((f: any) => (
                         <div
                           key={f.id}
-                          className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs hover:border-slate-300 transition-colors"
+                          className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs hover:border-slate-300 hover:shadow-card transition-all duration-150"
                         >
                           <p className="font-mono font-medium text-slate-800">{f.field_path}</p>
                           <p className="text-slate-400 mt-0.5">
