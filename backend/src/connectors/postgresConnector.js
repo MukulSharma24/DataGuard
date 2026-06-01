@@ -5,7 +5,7 @@ const logger = require('../utils/logger');
 
 const CONNECT_TIMEOUT_MS = 10_000;
 const QUERY_TIMEOUT_MS   = 30_000;
-const SAMPLE_LIMIT       = 100;
+const SAMPLE_LIMIT       = 500;
 const POOL_MAX           = 5;
 
 /** Build a pg.Pool from a plain config object. Credentials are NEVER logged. */

@@ -12,7 +12,7 @@ Connect a database → configure a scan (which schemas, how many rows to sample)
 
 The scanner samples rows from each column and runs two checks: does the column *name* look like PII (`email`, `pan_no`, `dob`, etc.), and do the actual *values* match known patterns (email regex, Aadhaar format, PAN card format, etc.). Confidence score comes from combining both signals. There's an optional Gemini 2.5 Flash layer that catches things the regex misses.
 
-One thing worth noting — on large tables it doesn't just do `LIMIT 100` from the top. It splits the sample across beginning, middle, and end of the table so you're not just reading seed/test data that was inserted first.
+One thing worth noting — on large tables it doesn't just do `LIMIT 500` from the top. It splits the sample across beginning, middle, and end of the table so you're not just reading seed/test data that was inserted first.
 
 Scans run async. You kick one off and the log streams in the browser in real time. You can also close the tab and come back — the scan keeps running on the backend.
 
@@ -149,15 +149,9 @@ MIT
 
 A few things to be honest about before using this in anything production-critical.
 
-**Sessions expire after 8 hours with no auto-refresh.** When the JWT goes stale, the user gets kicked back to the login screen. There's no silent refresh, no "remember me", and no way to revoke a session before the 8 hours are up — that's the tradeoff of stateless JWTs. If a cookie somehow gets compromised, it stays valid until natural expiry. Refresh token rotation is on the roadmap but not implemented yet.
-
-**It samples rows, it doesn't read full tables.** Each column gets up to 100 rows, distributed across the beginning, middle, and end of the table. This keeps scans fast and non-intrusive on production databases, but it means sparse columns — ones that are mostly NULL in the rows that got sampled — often come back with no sample values and get flagged at MEDIUM confidence on the column name alone rather than HIGH.
-
 **PII buried inside longer text is invisible.** The regex patterns match against the full column value. If a `notes` field contains "patient mentioned penicillin allergy" the scanner won't catch it — it only works on values that *are* PII, not values that happen to *contain* PII somewhere inside them.
 
 **No cross-table awareness.** A `user_id` foreign key pointing at a users table isn't flagged as sensitive just because the table it references holds PII. The scanner looks at each column in isolation without tracing relationships between tables.
-
-**MongoDB sparse fields can slip through.** If a field only exists in 5–10% of documents, there's a reasonable chance none of the 100 sampled documents contain it. The scanner can only classify what it actually sees.
 
 **Single-word names don't confirm via value pattern.** The name regex needs at least two words separated by a space. Columns full of single first names — which is common in certain South Indian and Southeast Asian naming conventions — won't trigger value-level NAME confirmation. The column name keyword match (`first_name`, `fname`, etc.) still fires, just at MEDIUM instead of HIGH.
 

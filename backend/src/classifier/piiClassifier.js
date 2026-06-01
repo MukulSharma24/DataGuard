@@ -858,11 +858,11 @@ function classifyField(fieldName, sampleValues = []) {
   const tokens    = normaliseFieldName(leafName);
   const nameMatch = matchFieldName(tokens);
 
-  // Flatten arrays/JSONB, take up to 20 non-empty samples for better statistical coverage
+  // Flatten arrays/JSONB, take up to 25 non-empty samples for better statistical coverage
   const nonNullSamples = sampleValues
     .flatMap(flattenSampleValue)
     .filter(v => v.trim() !== '')
-    .slice(0, 20);
+    .slice(0, 25);
 
   let valueMatch = null;
   let hashedFlag = false;

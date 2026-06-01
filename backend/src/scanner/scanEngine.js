@@ -159,7 +159,7 @@ async function scanPostgres(scanRunId, sourceId, connConfig, profileConfig) {
   const {
     includeSchemas = [],
     excludeSchemas = [],
-    sampleSize     = 100,
+    sampleSize     = 500,
     batchSize      = 20,
   } = profileConfig;
 

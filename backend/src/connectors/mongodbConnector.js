@@ -4,7 +4,7 @@ const { MongoClient } = require('mongodb');
 const logger = require('../utils/logger');
 
 const CONNECT_TIMEOUT_MS = 10_000;
-const SAMPLE_LIMIT       = 100;
+const SAMPLE_LIMIT       = 500;
 
 /**
  * Build a MongoClient from config.
