@@ -1,7 +1,7 @@
 'use strict';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PII Classifier
+// PII Classifier — Pattern Engine
 //
 // Detection strategy:
 //   1. Normalise the field name (lowercase, remove symbols, split camelCase)
@@ -10,14 +10,13 @@
 //   4. Combine signals to produce a confidence score and level
 //
 // Confidence bands:
-//   HIGH   85–100   name match AND value match
-//   MEDIUM 50–70    name match only (no/failed value regex)
-//   MEDIUM 40–60    value match only (name was not a match)
-//   LOW    20–39    weak/partial name token match
+//   HIGH   85–100   strong name match AND value match
+//   MEDIUM 50–84    strong name only | weak name + value | value only (high-specificity)
+//   LOW    20–39    weak name only
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ---------------------------------------------------------------------------
-// 1. Regex patterns for value-level detection
+// 1. Value-level regex patterns
 // ---------------------------------------------------------------------------
 const VALUE_PATTERNS = {
   EMAIL: /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/,
@@ -31,31 +30,50 @@ const VALUE_PATTERNS = {
   // PAN card: AAAAA9999A
   PAN: /^[A-Z]{5}[0-9]{4}[A-Z]$/,
 
-  // Aadhaar: 12 digits, optionally space-separated in groups of 4
+  // Aadhaar: 12 digits, optionally space/hyphen-separated in groups of 4
   AADHAAR: /^\d{4}[\s\-]?\d{4}[\s\-]?\d{4}$/,
 
-  // ISO dates, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD
-  DOB: /^(\d{4}-\d{2}-\d{2}|\d{2}[\/\-]\d{2}[\/\-]\d{4}|\d{4}[\/\-]\d{2}[\/\-]\d{2})$/,
+  // Indian Passport: 1 uppercase letter + 7 digits  (e.g. A1234567)
+  PASSPORT: /^[A-Z][0-9]{7}$/,
 
-  // Generic credit/debit card  (not stored — just flagged as BANK_ACCOUNT)
+  // ISO dates, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD
+  // Also: DD-Mon-YYYY (15-Jan-1990), DD Month YYYY (15 January 1990)
+  DOB: /^(\d{4}-\d{2}-\d{2}|\d{2}[\/\-]\d{2}[\/\-]\d{4}|\d{4}[\/\-]\d{2}[\/\-]\d{2}|\d{2}[\-\s](Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[\-\s]\d{4}|\d{2}\s(January|February|March|April|May|June|July|August|September|October|November|December)\s\d{4})$/i,
+
+  // Generic credit/debit card — 16 digits (flagged as BANK_ACCOUNT)
   CARD: /^\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}$/,
 
-  // Indian IFSC code: 4 letters + 0 + 6 alphanumeric
+  // Indian IFSC code: 4 uppercase letters + 0 + 6 alphanumeric
   IFSC: /^[A-Z]{4}0[A-Z0-9]{6}$/,
+
+  // MAC address: 6 groups of 2 hex digits separated by : or -
+  MAC: /^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$/,
+
+  // UUID v1-v5: 8-4-4-4-12 hex groups
+  UUID: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
 
   // IPv4 address
   IPV4: /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/,
 
-  // Person name: 2–4 words, each starting with a capital letter, letters/hyphens/apostrophes only
-  // e.g. "Rahul Sharma", "Mary O'Brien", "Jean-Paul Dupont"
+  // Indian Pincode: exactly 6 digits, first digit 1-9
+  PINCODE: /^[1-9][0-9]{5}$/,
+
+  // US ZIP code: 5 digits or ZIP+4
+  ZIP: /^\d{5}(-\d{4})?$/,
+
+  // Person name: 2–4 words, each starting with a capital letter
+  // Allows hyphens and apostrophes: "Mary O'Brien", "Jean-Paul Dupont"
   NAME: /^[A-Z][a-zA-Z'\-]{1,30}(\s[A-Z][a-zA-Z'\-]{1,30}){1,3}$/,
 
-  // Gender: exact common values (case-insensitive matched separately)
-  GENDER: /^(male|female|m|f|other|o|transgender|non-binary|nb|prefer not to say)$/i,
+  // Gender: exact common values (case-insensitive)
+  GENDER: /^(male|female|m|f|other|o|transgender|non-binary|nb|prefer not to say|agender|gender fluid)$/i,
+
+  // Religion: common religion/faith values
+  RELIGION: /^(hindu|hinduism|muslim|islam|christian|christianity|sikh|sikhism|buddhist|buddhism|jain|jainism|jewish|judaism|parsi|zoroastrianism|atheist|agnostic|other|none)$/i,
 };
 
 // ---------------------------------------------------------------------------
-// 2. Name-match dictionaries
+// 2. PII keyword dictionaries
 //    Each entry is a list of normalised token sets.
 //    A field name matches if any token set is a subset of the field's tokens.
 // ---------------------------------------------------------------------------
@@ -63,179 +81,306 @@ const PII_KEYWORD_SETS = {
   NAME: [
     ['name'],
     ['nm'],
-    ['firstname'],  ['fname'],
-    ['lastname'],   ['lname'],
-    ['fullname'],   ['full', 'nm'],  ['displayname'],
-    ['middlename'], ['mname'],  ['mn'],
-    ['givenname'],  ['surname'],
-    ['salutation'], ['prefix'],
-    ['fn'],         ['ln'],               // fn=first_name, ln=last_name
-    ['contactname'], ['persname'], ['contactperson'],
+    ['firstname'],      ['fname'],
+    ['lastname'],       ['lname'],
+    ['fullname'],       ['full', 'nm'],     ['displayname'],
+    ['middlename'],     ['mname'],          ['mn'],
+    ['givenname'],      ['surname'],
+    ['salutation'],     ['prefix'],
+    ['fn'],             ['ln'],
+    ['contactname'],    ['persname'],       ['contactperson'],
+    ['fathername'],     ['fathersnm'],      ['fathernm'],     ['fatherof'],
+    ['mothername'],     ['mothersnm'],      ['mothernm'],
+    ['spousename'],     ['husbandname'],    ['wifename'],
+    ['nomineename'],    ['nominee'],
+    ['guardianname'],   ['guardian'],
+    ['beneficiaryname'], ['beneficiary'],
+    ['altname'],        ['alternatename'],  ['aliases'],
+    ['applicantname'],  ['candidatename'],
+    ['personname'],     ['individualname'],
+    ['patientname'],    ['membername'],     ['holdername'],
+    ['authorisedname'], ['authorizedname'],
   ],
+
   EMAIL: [
     ['email'],
-    ['emailaddress'], ['emailid'],
+    ['emailaddress'],   ['emailid'],
     ['mail'],
     ['emailaddr'],
-    ['workemail'], ['corpemail'],
+    ['workemail'],      ['corpemail'],
+    ['personalemail'],  ['officialemail'],
+    ['alternateemail'], ['altemail'],       ['altemailid'],
+    ['recoveryemail'],  ['backemail'],
+    ['secondaryemail'],
+    ['emailwork'],      ['emailpersonal'],
+    ['mailid'],         ['mailaddress'],
   ],
+
   PHONE: [
-    ['phone'],      ['phoneno'],   ['phonenumber'],
-    ['mobile'],     ['mobileno'],  ['mobilenumber'],
-    ['mob'],        ['mbl'],
-    ['cell'],       ['cellno'],    ['cellphone'],
-    ['tel'],        ['telephone'], ['telephonenumber'],
-    ['phno'],       ['phn'],       ['pno'],       ['ph'],
-    ['contactno'],  ['cno'],
-    ['fax'],        ['faxno'],     ['faxnumber'],
-    ['landline'],   ['landlineno'],
-    ['whatsapp'],   ['wano'],
-    ['contact'],    // weak — matched as LOW when alone
+    ['phone'],          ['phoneno'],        ['phonenumber'],
+    ['mobile'],         ['mobileno'],       ['mobilenumber'],
+    ['mob'],            ['mbl'],
+    ['cell'],           ['cellno'],         ['cellphone'],
+    ['tel'],            ['telephone'],      ['telephonenumber'],
+    ['phno'],           ['phn'],            ['pno'],          ['ph'],
+    ['contactno'],      ['cno'],
+    ['fax'],            ['faxno'],          ['faxnumber'],
+    ['landline'],       ['landlineno'],
+    ['whatsapp'],       ['wano'],
+    ['contact'],
+    ['emergencycontact'], ['emergencyno'],  ['emergencyphno'],
+    ['alternateno'],    ['altno'],          ['altphone'],      ['altmobile'],
+    ['contactnumber'],  ['contactnum'],
+    ['secondaryphone'], ['secondarymobile'],
+    ['homeno'],         ['officeno'],       ['workmobile'],
+    ['rphone'],         ['hphone'],
+    ['primaryphone'],   ['primarymobile'],
   ],
+
   ADDRESS: [
-    ['address'],    ['addr'],      ['streetaddress'],
-    ['street'],     ['streetno'],
-    ['city'],       ['town'],
-    ['state'],      ['province'],
-    ['zip'],        ['zipcode'],   ['postalcode'], ['pincode'],
+    ['address'],        ['addr'],           ['streetaddress'],
+    ['street'],         ['streetno'],
+    ['city'],           ['town'],
+    ['state'],          ['province'],
+    ['zip'],            ['zipcode'],        ['postalcode'],   ['pincode'],
     ['country'],
-    ['location'],   ['locality'],
-    ['residence'],  ['resi'],
-    ['doorno'],     ['flat'],      ['house'],
-    ['district'],   ['tehsil'],    ['taluka'],
+    ['location'],       ['locality'],
+    ['residence'],      ['resi'],
+    ['doorno'],         ['flat'],           ['house'],
+    ['district'],       ['tehsil'],         ['taluka'],
     ['landmark'],
-    ['addr1'],      ['addr2'],     ['addr3'],
-    ['haddr'],      ['raddr'],     ['paddr'],      ['waddr'],  // home/residential/permanent/work
-    ['homeaddr'],   ['workaddr'],  ['permaddr'],   ['curraddr'],
-    ['geo'],        ['coordinates'], ['latlong'],
-    ['postcode'],   ['postcd'],    ['pcd'],
-    ['area'],       ['sector'],    ['colony'],     ['nagar'],
-    ['village'],    ['mandal'],    ['block'],
+    ['addr1'],          ['addr2'],          ['addr3'],
+    ['haddr'],          ['raddr'],          ['paddr'],        ['waddr'],
+    ['homeaddr'],       ['workaddr'],       ['permaddr'],     ['curraddr'],
+    ['geo'],            ['coordinates'],    ['latlong'],
+    ['postcode'],       ['postcd'],         ['pcd'],
+    ['area'],           ['sector'],         ['colony'],       ['nagar'],
+    ['village'],        ['mandal'],         ['block'],
+    ['billingaddress'], ['billingaddr'],    ['billaddr'],
+    ['shippingaddress'], ['shippingaddr'],  ['shipaddr'],
+    ['deliveryaddress'], ['deliveryaddr'],
+    ['permanentaddress'], ['permaaddr'],    ['permanentaddr'],
+    ['currentaddress'], ['corraddr'],       ['correspondenceaddress'],
+    ['officeaddress'],  ['officialaddress'],
+    ['registeredaddress'], ['regaddr'],
+    ['line1'],          ['line2'],          ['addressline1'], ['addressline2'],
+    ['addrline1'],      ['addrline2'],
+    ['latitude'],       ['longitude'],      ['lat'],          ['lng'],      ['lon'],
+    ['geolocation'],    ['geopoint'],
   ],
+
   DOB: [
-    ['dob'],        ['dobdt'],     ['dobd'],
-    ['dateofbirth'],['birthdate'], ['birthday'],
-    ['bornon'],     ['birthdt'],   ['birthd'],
-    ['birthyear'],  ['yearofbirth'], ['yob'],
-    ['bd'],         ['bday'],
-    ['age'],        // age strongly implies DOB-derived data
-    ['dateofbirth'], ['dofbirth'],
+    ['dob'],            ['dobdt'],          ['dobd'],
+    ['dateofbirth'],    ['birthdate'],      ['birthday'],
+    ['bornon'],         ['birthdt'],        ['birthd'],
+    ['birthyear'],      ['yearofbirth'],    ['yob'],
+    ['bd'],             ['bday'],
+    ['age'],
+    ['dofbirth'],
+    ['dateofbirth'],    ['birthmonth'],     ['birthyear'],
   ],
+
   GENDER: [
-    ['gender'],     ['sex'],
-    ['gndr'],       ['gnd'],       ['gen'],
+    ['gender'],         ['sex'],
+    ['gndr'],           ['gnd'],            ['gen'],
     ['sexuality'],
+    ['biologicalsex'],
   ],
+
   AADHAAR: [
-    ['aadhaar'],    ['aadhar'],    ['aadhaarno'],
-    ['adhaar'],     ['adhaarno'],
+    ['aadhaar'],        ['aadhar'],         ['aadhaarno'],
+    ['adhaar'],         ['adhaarno'],
     ['uidai'],
-    ['passport'],   ['passportno'],  ['passportnum'],
-    ['voterid'],    ['voteridno'],   ['electioncard'], ['epicno'],
+    ['passport'],       ['passportno'],     ['passportnum'],
+    ['voterid'],        ['voteridno'],      ['electioncard'],  ['epicno'],
     ['drivinglicense'], ['drivinglicence'], ['drivinglic'],
-    ['dlno'],       ['dlnum'],
-    ['nationalid'], ['govtid'],
+    ['dlno'],           ['dlnum'],
+    ['nationalid'],     ['govtid'],
+    ['ssn'],            ['socialsecurity'], // US Social Security Number
+    ['sin'],            // Canadian SIN
+    ['nid'],            ['nric'],           // national identity card (various countries)
+    ['taxid'],          ['tin'],            // tax identification
   ],
+
   PAN: [
-    ['pan'],        ['panno'],     ['pannumber'],
-    ['pancard'],    ['incometaxid'], ['incometaxno'],
+    ['pan'],            ['panno'],          ['pannumber'],
+    ['pancard'],        ['incometaxid'],    ['incometaxno'],
+    ['gstin'],          ['gstno'],          // GST number (business PII)
+    ['tan'],            ['tanno'],          // Tax Deduction Account Number
   ],
+
   BANK_ACCOUNT: [
-    ['accountno'],  ['accountnumber'],
-    ['bankaccount'],['bankaccno'],
-    ['acno'],       ['accno'],     ['acctno'],    ['acct'],
-    ['ifsc'],       ['ifsccode'],  ['ifsccd'],
-    ['bankno'],     ['sortcode'],
-    ['cardno'],     ['cardnumber'], ['creditcard'], ['debitcard'],
-    ['upiid'],      ['vpaid'],     ['vpa'],
-    ['neftno'],     ['rtgsno'],
-    ['iban'],       ['swift'],     ['bic'],
-    ['routingno'],  ['routingnumber'],
-    ['bsbno'],                     // Australian BSB
-    ['walletid'],   ['walletno'],
-    ['acctnum'],    ['bankid'],
+    ['accountno'],      ['accountnumber'],
+    ['bankaccount'],    ['bankaccno'],
+    ['acno'],           ['accno'],          ['acctno'],        ['acct'],
+    ['ifsc'],           ['ifsccode'],       ['ifsccd'],
+    ['bankno'],         ['sortcode'],
+    ['cardno'],         ['cardnumber'],     ['creditcard'],    ['debitcard'],
+    ['upiid'],          ['vpaid'],          ['vpa'],
+    ['neftno'],         ['rtgsno'],
+    ['iban'],           ['swift'],          ['bic'],
+    ['routingno'],      ['routingnumber'],
+    ['bsbno'],
+    ['walletid'],       ['walletno'],
+    ['acctnum'],        ['bankid'],
+    ['mmid'],           // mobile money id
+    ['payeeid'],        ['paymentid'],
+    ['achno'],          // ACH routing
+    ['micr'],           // MICR code on cheques
   ],
+
   USER_ID: [
-    ['userid'],     ['uid'],
+    ['userid'],         ['uid'],
     ['loginid'],
-    ['username'],   ['uname'],
+    ['username'],       ['uname'],
     ['accountid'],
-    ['memberid'],   ['customerno'], ['customerid'],  ['custid'],   ['custno'],
-    ['empid'],      ['employeeid'],
-    ['regid'],      ['registrationid'],
-    ['sessionid'],  ['sessiontoken'],
-    ['ipaddress'],  ['ipaddr'],     ['remoteip'],    ['clientip'],
-    ['subscriberid'], ['subid'],    ['userno'],
-    ['patientid'],  ['studentid'],  ['applicantid'],
-    ['pid'],        ['personid'],
-    ['handle'],     ['nickname'],   ['nick'],
-    ['profileid'],  ['profileno'],
-    ['deviceid'],   ['macaddr'],    ['macaddress'],
+    ['memberid'],       ['customerno'],     ['customerid'],    ['custid'],   ['custno'],
+    ['empid'],          ['employeeid'],
+    ['regid'],          ['registrationid'],
+    ['sessionid'],      ['sessiontoken'],
+    ['ipaddress'],      ['ipaddr'],         ['remoteip'],      ['clientip'],
+    ['subscriberid'],   ['subid'],          ['userno'],
+    ['patientid'],      ['studentid'],      ['applicantid'],
+    ['pid'],            ['personid'],
+    ['handle'],         ['nickname'],       ['nick'],
+    ['profileid'],      ['profileno'],
+    ['deviceid'],       ['macaddr'],        ['macaddress'],
+    ['referralcode'],   ['referral'],
+    ['trackingid'],     ['trackerid'],
+    ['transactionid'],  ['txnid'],          ['txid'],
+    ['orderid'],        ['ordernum'],       ['orderno'],
+    ['ticketid'],       ['caseid'],
+    ['reservationid'],  ['bookingid'],
+    ['agentid'],        ['brokerid'],
+    ['vendorid'],       ['supplierid'],     ['merchantid'],
+    ['fingerid'],       ['faceid'],         // biometric enrollment ID (not raw data)
   ],
+
   CREDENTIAL: [
-    ['password'],   ['passwd'],    ['pwd'],        ['pass'],
+    ['password'],       ['passwd'],         ['pwd'],           ['pass'],
     ['secret'],
-    ['apikey'],     ['authtoken'], ['accesstoken'],
-    ['token'],      ['refreshtoken'],
-    ['otp'],        ['otpcode'],   ['otpsecret'],
-    ['pin'],        ['pincode'],   // pin/pincode in credential context
+    ['apikey'],         ['authtoken'],      ['accesstoken'],
+    ['token'],          ['refreshtoken'],
+    ['otp'],            ['otpcode'],        ['otpsecret'],
+    ['pin'],            ['pincode'],
+    ['mpin'],           ['tpin'],           ['ipin'],
     ['passphrase'],
-    ['hash'],       ['pwdhash'],   ['passhash'],
-    ['privatekey'], ['privkey'],   ['sshkey'],     ['pgpkey'],
-    ['jwt'],        ['bearertoken'],
-    ['clientsecret'], ['appkey'],  ['servicekey'],
-    ['cvv'],        ['cvc'],       ['cvv2'],       // card security codes
-    ['encryptionkey'], ['enckey'],
+    ['hash'],           ['pwdhash'],        ['passhash'],
+    ['privatekey'],     ['privkey'],        ['sshkey'],        ['pgpkey'],
+    ['jwt'],            ['bearertoken'],
+    ['clientsecret'],   ['appkey'],         ['servicekey'],
+    ['cvv'],            ['cvc'],            ['cvv2'],
+    ['encryptionkey'],  ['enckey'],
+    ['securityanswer'], ['secretanswer'],
+    ['securityquestion'],
+    ['backupcode'],     ['recoverycode'],
+    ['totp'],           ['hotp'],
+    ['signature'],      ['digitalsignature'],
+    ['challenge'],
   ],
+
   SALARY: [
     ['salary'],
     ['ctc'],
     ['income'],
     ['compensation'],
     ['payroll'],
-    ['wage'],        ['wages'],
+    ['wage'],           ['wages'],
     ['stipend'],
     ['remuneration'],
     ['earnings'],
     ['gross', 'salary'], ['net', 'salary'],
-    ['annualsalary'],    ['monthlysalary'],
-    ['basepay'],         ['basesalary'],
+    ['annualsalary'],   ['monthlysalary'],
+    ['basepay'],        ['basesalary'],
+    ['bonus'],          ['hike'],           ['increment'],
+    ['allowance'],      ['hra'],            ['da'],
+    ['pf'],             ['gratuity'],       ['esic'],
+    ['takehome'],       ['netpay'],         ['grosspay'],
+    ['variablepay'],    ['fixedpay'],       ['incentive'],
+    ['lpa'],
+    ['package'],        ['annualpackage'],  ['totalpackage'],
+    ['offerletter', 'amount'],
   ],
+
   HEALTH: [
-    ['bloodgroup'],  ['blood', 'group'],  ['blood', 'type'],
+    ['bloodgroup'],     ['blood', 'group'], ['blood', 'type'], ['bloodtype'],
     ['diagnosis'],
-    ['medical', 'record'],  ['medical', 'history'],
+    ['medical', 'record'], ['medical', 'history'], ['medicalrecord'],
     ['disability'],
     ['prescription'],
-    ['allergy'],     ['allergies'],
+    ['allergy'],        ['allergies'],
+    ['height'],         ['weight'],         ['bmi'],
+    ['condition'],      ['disease'],        ['disorder'],
+    ['ailment'],        ['treatment'],      ['medication'],
+    ['medicine'],       ['drug'],           ['chronic'],
+    ['labresult'],      ['testresult'],     ['reportresult'],
+    ['medicalcondition'], ['healthcondition'],
+    ['mentalhealth'],
+    ['hiv'],            ['diabetes'],       ['cancer'],
+    ['hemoglobin'],     ['cholesterol'],    ['bp'],            ['bloodpressure'],
+    ['sugar'],          ['glucoselevel'],
+    ['handicap'],       ['specialneeds'],
   ],
+
   MARITAL: [
     ['marital'],
     ['maritalstatus'],
     ['spouse'],
     ['matrimonial'],
+    ['married'],        ['unmarried'],      ['divorced'],
+    ['widowed'],        ['single'],         ['separated'],
+    ['relationshipstatus'],
+    ['civilstatus'],
   ],
+
   NATIONALITY: [
     ['nationality'],
     ['citizenship'],
     ['domicile'],
+    ['national'],       ['origin'],         ['countryoforigin'],
+    ['ethnicity'],      ['race'],
+    ['pr'],
+    ['resident'],       ['residency'],
+    ['migrant'],        ['immigrant'],
+  ],
+
+  // Sensitive under DPDP Act 2023, GDPR Article 9 — religion/caste/faith
+  RELIGION: [
+    ['religion'],       ['faith'],
+    ['caste'],          ['subcaste'],
+    ['community'],      ['sect'],
+    ['denomination'],
+    ['gotra'],          // Hindu clan/lineage
+    ['jati'],           // caste sub-group
+  ],
+
+  // Raw biometric template data — never store without explicit consent
+  BIOMETRIC: [
+    ['fingerprint'],    ['fingerprintdata'], ['fingerprinttemplate'],
+    ['biometric'],      ['biometricdata'],   ['biometrictemplate'],
+    ['faceencoding'],   ['facedata'],        ['facetemplate'],     ['facevector'],
+    ['retina'],         ['irisdata'],        ['iristemplate'],
+    ['voiceprint'],     ['voiceid'],         ['voicetemplate'],
+    ['dna'],            ['dnasequence'],
+    ['handgeometry'],
+    ['vein'],           ['veinpattern'],
   ],
 };
 
 // Categories where a partial token match (not exact subset) is still meaningful
-const WEAK_MATCH_CATEGORIES = new Set(['NAME', 'PHONE', 'ADDRESS', 'USER_ID']);
+const WEAK_MATCH_CATEGORIES = new Set(['NAME', 'PHONE', 'ADDRESS', 'USER_ID', 'HEALTH', 'SALARY', 'RELIGION']);
 
-// Tokens that indicate a column is a counter/metric, not actual PII data.
-// e.g. login_count, error_num, visit_total → these contain PII-like words but are NOT PII.
+// Tokens that indicate a column is a counter/metric, not personal data.
 const COUNTER_TOKENS = new Set([
   'count', 'cnt', 'total', 'sum', 'avg', 'average', 'min', 'max',
   'num', 'score', 'rank', 'rating', 'points', 'index', 'idx',
   'seq', 'sequence', 'version', 'rev', 'revision', 'attempt', 'tries',
   'frequency', 'duration', 'interval', 'limit', 'quota',
+  'percent', 'pct', 'ratio', 'factor', 'multiplier',
 ]);
 
-// Tokens that indicate a date column is a system/operational timestamp, NOT a personal DOB.
-// Applies only when there is no name-based PII match (value-only DOB detection).
+// Tokens indicating a date column is an operational timestamp, NOT a birth date.
+// Applied only on value-only DOB detection (no name match).
 const NON_DOB_DATE_TOKENS = new Set([
   'created', 'updated', 'modified', 'timestamp', 'synced',
   'deleted', 'expires', 'expiry', 'scheduled', 'processed',
@@ -244,43 +389,43 @@ const NON_DOB_DATE_TOKENS = new Set([
   'open', 'opened', 'close', 'closed',
   'issue', 'issued', 'effective', 'activated',
   'register', 'registered', 'signup', 'enrolled',
-  'last', 'next', 'first',  // last_login, next_review, first_seen
-  'seen',                   // first_seen, last_seen — event timestamps
-  'at',                     // created_at, updated_at
+  'last', 'next', 'first',
+  'seen', 'at', 'on',
+  'purchase', 'transaction', 'payment', 'delivery', 'dispatch',
+  'submission', 'approval', 'rejection', 'cancellation',
 ]);
 
-// Exact column names that are definitively non-PII regardless of content.
+// Exact single-token column names that are definitively non-PII.
 const NON_PII_EXACT_NAMES = new Set([
   'id', 'pk', 'seq', 'sequence', 'version', 'revision',
-  'status', 'state',                             // state alone = OAuth/FSM state, not geographic
+  'status', 'state',
   'type', 'kind', 'class', 'category', 'flag', 'code',
   'active', 'enabled', 'visible', 'deleted', 'archived',
   'order', 'rank', 'priority', 'weight', 'sort',
   'amount', 'balance', 'price', 'cost', 'fee', 'total',
   'quantity', 'qty', 'count', 'size', 'length', 'width', 'height',
+  'currency', 'symbol', 'locale', 'timezone',
+  'ref', 'reference', 'tag', 'label', 'key', 'value',
+  'mode', 'channel', 'source', 'medium', 'campaign',
 ]);
 
 // ---------------------------------------------------------------------------
 // 3. Normalisation helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Split camelCase / PascalCase into individual words.
- * e.g. "firstName" → ["first", "Name"]
- */
 function splitCamelCase(str) {
-  return str.replace(/([a-z])([A-Z])/g, '$1 $2').split(' ');
+  // Split on lowercase→uppercase AND uppercase→uppercase+lowercase transitions
+  // e.g. "XMLParser" → "XML Parser", "firstName2" → "first Name 2"
+  return str
+    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .replace(/([a-zA-Z])(\d)/g, '$1 $2')
+    .split(' ');
 }
 
-/**
- * Normalise a field name into a sorted list of lowercase tokens with all
- * symbols removed.  This is intentionally aggressive so that:
- *   first_name, FirstName, FIRST-NAME, firstName → ['first', 'name']
- */
 function normaliseFieldName(name) {
   const tokens = [];
   for (const word of splitCamelCase(name)) {
-    // Remove non-alphanumeric then split on remaining separators
     const cleaned = word.replace(/[^a-zA-Z0-9]/g, ' ').trim().toLowerCase();
     for (const part of cleaned.split(/\s+/)) {
       if (part) tokens.push(part);
@@ -289,85 +434,88 @@ function normaliseFieldName(name) {
   return tokens;
 }
 
-// Concatenated form used for fast substring checks (e.g. ["phone","no"] → "phoneno")
 function tokensToJoined(tokens) { return tokens.join(''); }
 
 // ---------------------------------------------------------------------------
 // 4. Name-matching logic
 // ---------------------------------------------------------------------------
 
-/**
- * Returns the best-matching PII category for a given normalised token array,
- * along with whether the match was "strong" (all keywords present) or "weak"
- * (only some keywords present for permitted weak-match categories).
- */
 function matchFieldName(tokens) {
-  const joined = tokensToJoined(tokens);
+  const joined   = tokensToJoined(tokens);
   const tokenSet = new Set(tokens);
 
-  // Exact non-PII column names: id, status, type, balance, etc.
+  // Single-token exact non-PII names
   if (tokens.length === 1 && NON_PII_EXACT_NAMES.has(tokens[0])) return null;
 
-  // Counter suppression: login_count, error_num, visit_total → NOT PII.
-  // If the LAST token is a counter word, the column is a metric, not personal data.
+  // Counter suppression: login_count, error_num, visit_total → NOT PII
   if (tokens.length >= 2 && COUNTER_TOKENS.has(tokens[tokens.length - 1])) return null;
-  // Also suppress if ANY token is a counter when paired with USER_ID-like tokens.
-  // e.g. login_count, login_attempt, session_count
   if ([...tokenSet].some(t => COUNTER_TOKENS.has(t)) &&
       (tokenSet.has('login') || tokenSet.has('session') || tokenSet.has('attempt'))) {
     return null;
   }
 
-  // Boolean column suppression: is_active, has_email, can_login → NOT PII.
+  // Boolean column suppression: is_active, has_email, can_login → NOT PII
   const BOOL_PREFIXES = new Set(['is', 'has', 'can', 'should', 'was', 'did', 'will', 'allow']);
   if (tokens.length >= 2 && BOOL_PREFIXES.has(tokens[0])) return null;
 
-  // age + range/limit modifier → operational metric, not personal DOB data.
-  // e.g. age_group, age_limit, min_age, max_age, age_band, age_tier → NOT PII
+  // Age metric suppression: age_group, age_limit, min_age → NOT personal DOB
   if (tokenSet.has('age') && tokens.length >= 2) {
-    const AGE_METRIC_WORDS = new Set(['group', 'limit', 'min', 'max', 'range', 'band', 'tier', 'bracket', 'category']);
-    if ([...tokenSet].some(t => AGE_METRIC_WORDS.has(t))) return null;
+    const AGE_METRICS = new Set(['group', 'limit', 'min', 'max', 'range', 'band', 'tier', 'bracket', 'category']);
+    if ([...tokenSet].some(t => AGE_METRICS.has(t))) return null;
   }
 
-  // Technical hash columns are integrity checksums, NOT credentials.
-  // e.g. file_hash, content_hash, git_hash, commit_sha → NOT CREDENTIAL
+  // Technical hash suppression: file_hash, content_hash, commit_sha → NOT CREDENTIAL
   if (tokenSet.has('hash') && tokens.length >= 2) {
-    const HASH_CONTEXT = new Set(['file', 'content', 'git', 'commit', 'sha', 'md5', 'crc', 'checksum']);
-    if ([...tokenSet].some(t => HASH_CONTEXT.has(t))) return null;
+    const HASH_CTX = new Set(['file', 'content', 'git', 'commit', 'sha', 'md5', 'crc', 'checksum']);
+    if ([...tokenSet].some(t => HASH_CTX.has(t))) return null;
   }
 
-  // Specific overrides: catch fields whose names contain generic PII tokens but mean something
-  // more specific. e.g. "ip_address" contains "address" but is a network identifier, not
-  // a physical address; "username" contains "name" but is a login identifier, not a person's name.
+  // Financial metadata suppression: currency_code, payment_mode → NOT PII
+  if (tokenSet.has('currency') || tokenSet.has('symbol')) return null;
+  if (tokenSet.has('mode') && (tokenSet.has('payment') || tokenSet.has('channel'))) return null;
+
+  // Operational metric suppression: error_code, status_code → NOT PII
+  if (tokenSet.has('code') && (tokenSet.has('error') || tokenSet.has('status') || tokenSet.has('response'))) return null;
+
+  // IP address override: ip_address contains "address" but is a network identifier
   if (tokenSet.has('ip') && (tokenSet.has('address') || joined.includes('addr'))) {
     return { category: 'USER_ID', matchStrength: 'strong' };
   }
+
+  // Username override: contains "name" but is a login identifier
   if (joined === 'username' || joined === 'uname' || joined === 'loginname') {
     return { category: 'USER_ID', matchStrength: 'strong' };
   }
 
-  // Entity-name exclusion: a 2-token field like "bank_name" or "company_name" stores an
-  // organisation's name, not a person's name → not PII.
-  // Only applies when the field is exactly 2 tokens (so "company_owner_name" still flags as NAME).
+  // Weight/height suppression when context is products/packages (NOT health)
+  // product_weight, package_weight, item_weight → NOT HEALTH
+  const PHYSICAL_PRODUCT_CTX = new Set(['product', 'item', 'package', 'parcel', 'shipment', 'cargo']);
+  if ((tokenSet.has('weight') || tokenSet.has('height') || tokenSet.has('length') || tokenSet.has('width')) &&
+      [...tokenSet].some(t => PHYSICAL_PRODUCT_CTX.has(t))) {
+    return null;
+  }
+
+  // Entity-name exclusion: bank_name, company_name → NOT a person's name
   const ENTITY_TOKENS = new Set([
     'bank', 'company', 'firm', 'org', 'organization', 'organisation',
     'product', 'item', 'shop', 'store', 'brand', 'category', 'role', 'group',
     'service', 'department', 'dept', 'plan', 'course', 'module', 'project', 'team',
+    'scheme', 'fund', 'portfolio', 'account', 'branch',
   ]);
   if (tokens.length === 2 && tokenSet.has('name') &&
       [...tokenSet].some(t => ENTITY_TOKENS.has(t))) {
     return null;
   }
 
+  // Strong match: all keywords in the set are present
   for (const [category, keywordSets] of Object.entries(PII_KEYWORD_SETS)) {
     for (const kwSet of keywordSets) {
-      // Strong match: all keywords in the set are present in the field tokens
       const allPresent = kwSet.every(kw => tokenSet.has(kw) || joined.includes(kw));
       if (allPresent) return { category, matchStrength: 'strong' };
     }
   }
 
-  // Weak match: any single keyword appears as a substring
+  // Weak match: any keyword appears as a substring (for permitted categories only)
   for (const [category, keywordSets] of Object.entries(PII_KEYWORD_SETS)) {
     if (!WEAK_MATCH_CATEGORIES.has(category)) continue;
     for (const kwSet of keywordSets) {
@@ -383,17 +531,16 @@ function matchFieldName(tokens) {
 // 5. Value-level matching
 // ---------------------------------------------------------------------------
 
-/**
- * Tests a sample value against value-level patterns.
- * Returns the matching category, or null.
- */
+// Tested in specificity order — most unambiguous first to avoid misclassification
+const HIGH_SPECIFICITY_ORDER = [
+  'EMAIL', 'PAN', 'AADHAAR', 'PASSPORT', 'IFSC', 'MAC', 'UUID',
+  'CARD', 'PHONE', 'IPV4', 'PINCODE', 'ZIP', 'DOB', 'NAME', 'GENDER', 'RELIGION',
+];
+
 function matchValue(value) {
   if (value === null || value === undefined) return null;
   const str = String(value).trim();
   if (!str) return null;
-
-  // Check high-specificity patterns first to avoid ambiguous matches
-  const HIGH_SPECIFICITY_ORDER = ['EMAIL', 'PAN', 'AADHAAR', 'IFSC', 'CARD', 'PHONE', 'IPV4', 'DOB', 'NAME', 'GENDER'];
 
   for (const category of HIGH_SPECIFICITY_ORDER) {
     const pattern = VALUE_PATTERNS[category];
@@ -408,14 +555,17 @@ function matchValue(value) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Hash/encryption detection
+// 6. Hash / encryption detection
 // ---------------------------------------------------------------------------
 const HASH_PATTERNS = [
-  /^[a-f0-9]{32}$/i,   // MD5
-  /^[a-f0-9]{40}$/i,   // SHA-1
-  /^[a-f0-9]{64}$/i,   // SHA-256
-  /^\$2[aby]\$\d+\$.+/, // bcrypt
-  /^[A-Za-z0-9+/]{40,}={0,2}$/,  // base64 (rough)
+  /^[a-f0-9]{32}$/i,             // MD5
+  /^[a-f0-9]{40}$/i,             // SHA-1
+  /^[a-f0-9]{64}$/i,             // SHA-256
+  /^[a-f0-9]{128}$/i,            // SHA-512
+  /^\$2[aby]\$\d+\$.{53}$/,      // bcrypt (exact length)
+  /^\$argon2(id?|i)\$/,          // Argon2
+  /^pbkdf2:[a-z0-9:]+\$.+/i,    // PBKDF2 (Flask/Werkzeug format)
+  /^[A-Za-z0-9+/]{43,}={0,2}$/, // base64 ≥ 43 chars (rough credential heuristic)
 ];
 
 function looksHashed(value) {
@@ -429,21 +579,28 @@ function looksHashed(value) {
 // ---------------------------------------------------------------------------
 
 const ADDRESS_VALUE_KEYWORDS = new Set([
-  'road', 'rd', 'street', 'st', 'avenue', 'ave', 'lane',
+  // English
+  'road', 'rd', 'street', 'st', 'avenue', 'ave', 'boulevard', 'blvd',
+  'drive', 'dr', 'lane', 'ln', 'court', 'ct', 'place', 'pl',
+  'circle', 'terrace', 'way', 'highway', 'hwy', 'expressway',
+  // Indian
   'nagar', 'colony', 'sector', 'phase', 'block', 'plot',
-  'flat', 'floor', 'building', 'complex', 'society',
+  'flat', 'floor', 'building', 'complex', 'society', 'apartments',
   'village', 'district', 'tehsil', 'mandal', 'taluka',
+  'marg', 'vihar', 'enclave', 'extension', 'puram', 'park',
+  'heights', 'residency', 'towers', 'cross', 'main',
 ]);
 
 function looksLikeAddress(value) {
   const str = String(value).trim().toLowerCase();
+  if (str.length < 6) return false;
   if (!/\d/.test(str)) return false;
   const words = str.split(/[\s,\-\/]+/);
   return words.some(w => ADDRESS_VALUE_KEYWORDS.has(w));
 }
 
 // ---------------------------------------------------------------------------
-// 7b. Sample flattener — handles JSONB objects and PostgreSQL/MongoDB arrays
+// 7b. Sample flattener — handles JSONB objects and arrays
 // ---------------------------------------------------------------------------
 
 function flattenSampleValue(v) {
@@ -460,43 +617,54 @@ function flattenSampleValue(v) {
 // 8. Sample masking
 // ---------------------------------------------------------------------------
 
-/**
- * Produces a masked representation of a value.
- * e.g. "john@example.com" → "j***@example.com"
- */
 function maskValue(value) {
   if (value === null || value === undefined) return null;
   const str = String(value).trim();
   if (!str) return '';
 
-  // Email
+  // Email: keep first char of local + full domain
   if (VALUE_PATTERNS.EMAIL.test(str)) {
     const [local, domain] = str.split('@');
     return `${local[0]}***@${domain}`;
   }
 
-  // Phone — keep last 4 digits
-  if (str.length >= 8) {
+  // UUID: keep version and variant nibbles visible for structural recognition
+  if (VALUE_PATTERNS.UUID.test(str)) {
+    return str.replace(/[0-9a-f]/gi, (c, i) => (i < 9 || [14, 19].includes(i)) ? c : '*');
+  }
+
+  // Phone / long numeric: keep last 4 digits
+  if (str.length >= 8 && /^\+?[\d\s\-().]+$/.test(str)) {
     return `${'*'.repeat(str.length - 4)}${str.slice(-4)}`;
   }
 
-  // Short values — mask all but first character
-  return `${str[0]}${'*'.repeat(str.length - 1)}`;
+  // General long value: keep first char, mask rest
+  if (str.length >= 4) {
+    return `${str[0]}${'*'.repeat(Math.min(str.length - 1, 6))}`;
+  }
+
+  // Short values (gender codes M/F, A+, etc.): don't mask — they're not PII themselves
+  return str;
 }
 
 // ---------------------------------------------------------------------------
-// 8. Confidence scoring
+// 9. Confidence scoring
 // ---------------------------------------------------------------------------
 
 function computeConfidence(nameMatch, valueMatch) {
   if (nameMatch?.matchStrength === 'strong' && valueMatch) {
-    return { score: 90, level: 'HIGH' };
+    return { score: 92, level: 'HIGH' };
   }
   if (nameMatch?.matchStrength === 'strong') {
-    return { score: 60, level: 'MEDIUM' };
+    return { score: 62, level: 'MEDIUM' };
   }
   if (nameMatch?.matchStrength === 'weak' && valueMatch) {
-    return { score: 55, level: 'MEDIUM' };
+    return { score: 57, level: 'MEDIUM' };
+  }
+  // High-specificity value matches (PAN, Aadhaar, email, etc.) get higher value-only score
+  const HIGH_SPEC = new Set(['EMAIL', 'PAN', 'AADHAAR', 'PASSPORT', 'IFSC', 'MAC', 'UUID', 'CARD', 'PHONE']);
+  if (valueMatch && HIGH_SPEC.has(valueMatch)) {
+    return { score: 72, level: 'MEDIUM' };
   }
   if (valueMatch) {
     return { score: 50, level: 'MEDIUM' };
@@ -504,7 +672,7 @@ function computeConfidence(nameMatch, valueMatch) {
   if (nameMatch?.matchStrength === 'weak') {
     return { score: 25, level: 'LOW' };
   }
-  return null; // no signal
+  return null;
 }
 
 function buildReason(fieldName, nameMatch, valueMatch, hashedFlag) {
@@ -518,107 +686,37 @@ function buildReason(fieldName, nameMatch, valueMatch, hashedFlag) {
     parts.push(`Sample values match ${valueMatch} regex pattern`);
   }
   if (hashedFlag) {
-    parts.push('Values appear hashed/encrypted — name-based detection only');
+    parts.push('Values appear hashed/encrypted — detection based on field name only');
   }
   return parts.join('; ');
 }
 
 // ---------------------------------------------------------------------------
-// 9. Main public API
+// 10. Value category remapping
+//     Some value patterns map to a different PII category label.
 // ---------------------------------------------------------------------------
-
-/**
- * Classify a single field and its sample values.
- *
- * @param {string}   fieldName   - Column name or dot-path (e.g. "user.contact.email")
- * @param {any[]}    sampleValues - Up to 100 non-null sample values
- * @returns {object|null}  Classification result or null if no PII detected
- */
-function classifyField(fieldName, sampleValues = []) {
-  // Use just the leaf segment for dot-path fields (MongoDB)
-  const leafName = fieldName.includes('.') ? fieldName.split('.').pop() : fieldName;
-
-  const tokens    = normaliseFieldName(leafName);
-  const nameMatch = matchFieldName(tokens);
-
-  // Flatten arrays/JSONB objects then take up to 15 non-null, non-empty values
-  const nonNullSamples = sampleValues
-    .flatMap(flattenSampleValue)
-    .filter(v => v.trim() !== '')
-    .slice(0, 15);
-
-  let valueMatch = null;
-  let hashedFlag = false;
-
-  for (const sample of nonNullSamples) {
-    const vm = matchValue(sample);
-    // NAME and GENDER patterns require majority confirmation — skip single-sample fast path
-    if (vm && vm !== 'NAME' && vm !== 'GENDER') { valueMatch = vm; break; }
-    if (looksHashed(sample)) { hashedFlag = true; }
-  }
-
-  // Map IFSC and IPV4 value matches to their PII categories
-  if (valueMatch === 'IFSC')  valueMatch = 'BANK_ACCOUNT';
-  if (valueMatch === 'IPV4')  valueMatch = 'USER_ID';
-
-  // Suppress DOB value-only detection when the field name indicates a non-personal date:
-  // join_date, opened_date, last_login, created_at etc. contain dates that match the DOB
-  // regex but are operational timestamps, not birth dates.
-  if (valueMatch === 'DOB' && !nameMatch) {
-    const leafTokenSet = new Set(normaliseFieldName(leafName));
-    if ([...NON_DOB_DATE_TOKENS].some(t => leafTokenSet.has(t))) {
-      valueMatch = null;
-    }
-  }
-
-  // NAME: only flag via value if majority of samples look like person names
-  if (!valueMatch && isMajorityNames(nonNullSamples)) valueMatch = 'NAME';
-
-  // GENDER: flag if majority (≥60%) of non-null samples are recognised gender values
-  if (!valueMatch && nonNullSamples.length > 0) {
-    const genderHits = nonNullSamples.filter(v => VALUE_PATTERNS.GENDER.test(String(v).trim()));
-    if (genderHits.length >= Math.ceil(nonNullSamples.length * 0.6)) {
-      valueMatch = 'GENDER';
-    }
-  }
-
-  // ADDRESS: value-level heuristic — digit + known address keyword (Road, Nagar, etc.)
-  if (!valueMatch) {
-    for (const sample of nonNullSamples) {
-      if (looksLikeAddress(sample)) { valueMatch = 'ADDRESS'; break; }
-    }
-  }
-
-  const category = nameMatch?.category ?? (valueMatch ? valueMatchToCategory(valueMatch) : null);
-  if (!category) return null;
-
-  const confidence = computeConfidence(nameMatch, valueMatch);
-  if (!confidence) return null;
-
-  const maskedSamples = nonNullSamples.slice(0, 3).map(maskValue);
-
-  return {
-    fieldPath:           fieldName,
-    piiCategory:         category,
-    confidenceScore:     confidence.score,
-    confidenceLevel:     confidence.level,
-    detectionReason:     buildReason(leafName, nameMatch, valueMatch, hashedFlag),
-    sampleValuesMasked:  maskedSamples,
+function valueMatchToCategory(vm) {
+  const MAP = {
+    CARD:     'BANK_ACCOUNT',
+    IFSC:     'BANK_ACCOUNT',
+    IPV4:     'USER_ID',
+    MAC:      'USER_ID',
+    UUID:     'USER_ID',
+    PASSPORT: 'AADHAAR',      // government ID category
+    PINCODE:  'ADDRESS',
+    ZIP:      'ADDRESS',
   };
+  return MAP[vm] ?? vm;
 }
 
-// VALUE_PATTERNS keys don't all map 1:1 to PII_KEYWORD_SETS keys
-function valueMatchToCategory(vmCategory) {
-  const map = { CARD: 'BANK_ACCOUNT' };
-  return map[vmCategory] ?? vmCategory;
-}
+// ---------------------------------------------------------------------------
+// 11. Main public API
+// ---------------------------------------------------------------------------
 
 function toTitleCase(str) {
   return str.replace(/\b\w+/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
 }
 
-// NAME value pattern — also normalises ALL-CAPS values (RAHUL SHARMA → Rahul Sharma)
-// Uses 50% majority threshold to handle mixed columns.
 function isMajorityNames(samples) {
   if (!samples.length) return false;
   const hits = samples.filter(v => {
@@ -629,10 +727,93 @@ function isMajorityNames(samples) {
 }
 
 /**
- * Classify all fields in a table/collection result set.
+ * Classify a single field and its sample values.
+ *
+ * @param {string} fieldName    Column name or dot-path (e.g. "user.contact.email")
+ * @param {any[]}  sampleValues Up to 100 non-null sample values
+ * @returns {object|null}       Classification result or null if no PII detected
+ */
+function classifyField(fieldName, sampleValues = []) {
+  const leafName  = fieldName.includes('.') ? fieldName.split('.').pop() : fieldName;
+  const tokens    = normaliseFieldName(leafName);
+  const nameMatch = matchFieldName(tokens);
+
+  // Flatten arrays/JSONB, take up to 20 non-empty samples for better statistical coverage
+  const nonNullSamples = sampleValues
+    .flatMap(flattenSampleValue)
+    .filter(v => v.trim() !== '')
+    .slice(0, 20);
+
+  let valueMatch = null;
+  let hashedFlag = false;
+
+  for (const sample of nonNullSamples) {
+    const vm = matchValue(sample);
+    // NAME, GENDER, RELIGION require majority confirmation — skip single-sample fast path
+    if (vm && !['NAME', 'GENDER', 'RELIGION'].includes(vm)) { valueMatch = vm; break; }
+    if (looksHashed(sample)) { hashedFlag = true; }
+  }
+
+  // Remap value match to canonical PII category
+  if (valueMatch) valueMatch = valueMatchToCategory(valueMatch);
+
+  // Suppress DOB value-only detection for operational timestamps
+  if (valueMatch === 'DOB' && !nameMatch) {
+    const leafTokenSet = new Set(normaliseFieldName(leafName));
+    if ([...NON_DOB_DATE_TOKENS].some(t => leafTokenSet.has(t))) {
+      valueMatch = null;
+    }
+  }
+
+  // NAME: flag only if ≥60% of samples look like person names
+  if (!valueMatch && isMajorityNames(nonNullSamples)) valueMatch = 'NAME';
+
+  // GENDER: flag if ≥60% of samples are recognised gender values
+  if (!valueMatch && nonNullSamples.length > 0) {
+    const genderHits = nonNullSamples.filter(v => VALUE_PATTERNS.GENDER.test(String(v).trim()));
+    if (genderHits.length >= Math.ceil(nonNullSamples.length * 0.6)) {
+      valueMatch = 'GENDER';
+    }
+  }
+
+  // RELIGION: flag if ≥60% of samples are recognised religion values
+  if (!valueMatch && nonNullSamples.length > 0) {
+    const religionHits = nonNullSamples.filter(v => VALUE_PATTERNS.RELIGION.test(String(v).trim()));
+    if (religionHits.length >= Math.ceil(nonNullSamples.length * 0.6)) {
+      valueMatch = 'RELIGION';
+    }
+  }
+
+  // ADDRESS: value-level heuristic — digit + known address keyword
+  if (!valueMatch) {
+    for (const sample of nonNullSamples) {
+      if (looksLikeAddress(sample)) { valueMatch = 'ADDRESS'; break; }
+    }
+  }
+
+  const category = nameMatch?.category ?? (valueMatch ? valueMatch : null);
+  if (!category) return null;
+
+  const confidence = computeConfidence(nameMatch, valueMatch);
+  if (!confidence) return null;
+
+  const maskedSamples = nonNullSamples.slice(0, 3).map(maskValue);
+
+  return {
+    fieldPath:          fieldName,
+    piiCategory:        category,
+    confidenceScore:    confidence.score,
+    confidenceLevel:    confidence.level,
+    detectionReason:    buildReason(leafName, nameMatch, valueMatch, hashedFlag),
+    sampleValuesMasked: maskedSamples,
+  };
+}
+
+/**
+ * Classify all fields in a table/collection.
  *
  * @param {Array<{name: string, samples: any[]}>} fields
- * @returns {Array}  Array of classification results (nulls filtered out)
+ * @returns {Array}  Classification results (nulls filtered)
  */
 function classifyFields(fields) {
   return fields

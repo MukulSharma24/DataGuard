@@ -222,7 +222,8 @@ async function scanPostgres(scanRunId, sourceId, connConfig, profileConfig) {
             // Semaphore caps concurrent Gemini calls within RPM budget
             await _llmSem.acquire();
             try {
-              const llmMap = await classifyTableWithLLM(schema, table.name, fieldSamples);
+              // Pass pattern findings as hints so LLM confirms, refines, or catches misses
+              const llmMap = await classifyTableWithLLM(schema, table.name, fieldSamples, patternFindings);
               findings = mergeResults(patternFindings, llmMap, fieldSamples);
               const llmAdded = Math.max(0, findings.length - patternFindings.length);
               classifierStats.llmAdded += llmAdded;
@@ -317,7 +318,7 @@ async function scanMongodb(scanRunId, sourceId, connConfig, profileConfig) {
       if (isLLMEnabled()) {
         await _llmSem.acquire();
         try {
-          const llmMap = await classifyTableWithLLM('default', collection.name, collection.fields);
+          const llmMap = await classifyTableWithLLM('default', collection.name, collection.fields, patternFindings);
           findings = mergeResults(patternFindings, llmMap, collection.fields);
           const llmAdded = Math.max(0, findings.length - patternFindings.length);
           classifierStats.llmAdded += llmAdded;
