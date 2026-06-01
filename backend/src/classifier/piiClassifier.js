@@ -648,6 +648,126 @@ function maskValue(value) {
 }
 
 // ---------------------------------------------------------------------------
+// 8b. LLM-optimised masking
+//
+// Different goal from maskValue():
+//   maskValue()   → user-facing display, minimal visible info
+//   maskForLLM()  → sent to Gemini, preserves TYPE SIGNATURE so the model
+//                   can classify without seeing actual PII
+//
+// Design rules:
+//   - Keep structural shape (format, length, character class) visible
+//   - Never send real personal data values
+//   - Use bracketed type hints for opaque formats (hashes, tokens)
+//   - Short enum values (M/F, A+, Hindu) are kept as-is — the value itself
+//     is needed for classification and isn't linkable to a specific person
+// ---------------------------------------------------------------------------
+
+function maskForLLM(value) {
+  if (value === null || value === undefined) return null;
+  const str = String(value).trim();
+  if (!str) return null;
+
+  // Short enum / code values — safe to show as-is, needed for classification
+  // (gender codes, blood groups, religion names, status codes, etc.)
+  if (str.length <= 12 && !/\d{5,}/.test(str) && !str.includes('@')) return str;
+
+  // Email: keep first char of local part + full domain (domain is not PII)
+  if (VALUE_PATTERNS.EMAIL.test(str)) {
+    const [local, domain] = str.split('@');
+    return `${local[0]}***@${domain}`;
+  }
+
+  // Bcrypt / Argon2 / PBKDF2 — hash algorithm is the only signal needed
+  if (/^\$2[aby]\$\d+\$/.test(str))  return '[bcrypt-hash]';
+  if (/^\$argon2/.test(str))          return '[argon2-hash]';
+  if (/^pbkdf2:/i.test(str))          return '[pbkdf2-hash]';
+
+  // Hex hashes — identify by exact length (algorithm is diagnostic)
+  if (/^[a-f0-9]{32}$/i.test(str))   return '[md5-hash:32chars]';
+  if (/^[a-f0-9]{40}$/i.test(str))   return '[sha1-hash:40chars]';
+  if (/^[a-f0-9]{64}$/i.test(str))   return '[sha256-hash:64chars]';
+  if (/^[a-f0-9]{128}$/i.test(str))  return '[sha512-hash:128chars]';
+
+  // UUID — format is diagnostic, version nibble preserved
+  if (VALUE_PATTERNS.UUID.test(str)) {
+    const ver = str[14];
+    return `[uuid-v${ver}:xxxxxxxx-xxxx-${ver}xxx-xxxx-xxxxxxxxxxxx]`;
+  }
+
+  // PAN card — keep positional format (letter pattern is the PAN signature)
+  if (VALUE_PATTERNS.PAN.test(str)) {
+    return `${str[0]}XXXX${str[5]}XXX${str[9]}`;  // e.g. AXXXXCXXXF
+  }
+
+  // Aadhaar — show last 4 digits (standard display format in India)
+  if (VALUE_PATTERNS.AADHAAR.test(str)) {
+    const d = str.replace(/[\s\-]/g, '');
+    return `XXXX XXXX ${d.slice(-4)}`;
+  }
+
+  // Indian Passport — show format: letter + masked digits
+  if (VALUE_PATTERNS.PASSPORT.test(str)) {
+    return `${str[0]}XXXXXXX`;
+  }
+
+  // Credit/debit card — last 4 visible (PCI-DSS standard display)
+  if (VALUE_PATTERNS.CARD.test(str)) {
+    const d = str.replace(/[\s\-]/g, '');
+    return `XXXX-XXXX-XXXX-${d.slice(-4)}`;
+  }
+
+  // IFSC — not personal data, safe to show completely
+  if (VALUE_PATTERNS.IFSC.test(str)) return str;
+
+  // MAC address — keep format, mask last 3 octets
+  if (VALUE_PATTERNS.MAC.test(str)) {
+    const parts = str.split(/[:\-]/);
+    return `${parts[0]}:${parts[1]}:XX:XX:XX:XX`;
+  }
+
+  // Phone number — keep format + last 4 digits
+  if (VALUE_PATTERNS.PHONE.test(str)) {
+    const d = str.replace(/[\s\-().]/g, '');
+    if (d.startsWith('+')) return `${d.slice(0, 3)}XXXXXX${d.slice(-4)}`;
+    return `XXXXXX${d.slice(-4)}`;
+  }
+
+  // IPv4 — mask last 2 octets
+  if (VALUE_PATTERNS.IPV4.test(str)) {
+    const p = str.split('.');
+    return `${p[0]}.${p[1]}.X.X`;
+  }
+
+  // Date formats — show year only, mask month/day (year alone is not PII)
+  const isoDate = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoDate) return `${isoDate[1]}-XX-XX`;
+  const dmyDate = str.match(/^(\d{2})[\/\-](\d{2})[\/\-](\d{4})$/);
+  if (dmyDate) return `XX/XX/${dmyDate[3]}`;
+  const monDate = str.match(/^(\d{2})[\-\s](Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[\-\s](\d{4})$/i);
+  if (monDate) return `XX-${monDate[2]}-${monDate[3]}`;
+
+  // Indian pincode / US ZIP — not directly personal, safe to show
+  if (VALUE_PATTERNS.PINCODE.test(str) || VALUE_PATTERNS.ZIP.test(str)) return str;
+
+  // Long base64 (binary data, biometric templates, encoded blobs)
+  if (/^[A-Za-z0-9+/]{40,}={0,2}$/.test(str)) return `[base64-encoded:${str.length}chars]`;
+
+  // Long token / API key (alphanumeric, no spaces)
+  if (str.length > 20 && /^[A-Za-z0-9_\-]+$/.test(str)) return `[token:${str.length}chars]`;
+
+  // Person name — keep first letter of each word
+  if (VALUE_PATTERNS.NAME.test(str) || VALUE_PATTERNS.NAME.test(
+    str.replace(/\b\w+/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+  )) {
+    return str.split(/\s+/).map(w => `${w[0]}${'*'.repeat(Math.min(w.length - 1, 4))}`).join(' ');
+  }
+
+  // General fallback — keep first char + length hint so LLM knows value exists
+  return `${str[0]}***[${str.length}chars]`;
+}
+
+// ---------------------------------------------------------------------------
 // 9. Confidence scoring
 // ---------------------------------------------------------------------------
 
@@ -821,4 +941,4 @@ function classifyFields(fields) {
     .filter(Boolean);
 }
 
-module.exports = { classifyField, classifyFields, normaliseFieldName, maskValue };
+module.exports = { classifyField, classifyFields, normaliseFieldName, maskValue, maskForLLM };

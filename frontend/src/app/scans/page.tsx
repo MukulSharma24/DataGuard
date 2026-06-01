@@ -13,15 +13,18 @@ import { Button } from '@/components/ui/Button';
 const STATUSES = ['', 'running', 'completed', 'partial', 'failed', 'pending'];
 
 export default function ScansPage() {
-  const [scans, setScans]     = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [filter, setFilter]   = useState('');
+  const [scans, setScans]         = useState<any[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [filter, setFilter]       = useState('');
 
-  const load = useCallback(() => {
-    setLoading(true);
+  const load = useCallback((manual = false) => {
+    if (manual) setRefreshing(true); else setLoading(true);
     const params: any = { limit: '100' };
     if (filter) params.status = filter;
-    getScans(params).then(r => setScans(r.scans ?? [])).finally(() => setLoading(false));
+    getScans(params)
+      .then(r => setScans(r.scans ?? []))
+      .finally(() => { setLoading(false); setRefreshing(false); });
   }, [filter]);
 
   useEffect(() => { load(); }, [load]);
@@ -44,8 +47,8 @@ export default function ScansPage() {
               <option key={s} value={s}>{s || 'All statuses'}</option>
             ))}
           </select>
-          <Button variant="secondary" size="sm" onClick={load} title="Refresh">
-            <RefreshCw size={13} />
+          <Button variant="secondary" size="sm" onClick={() => load(true)} disabled={refreshing || loading} title="Refresh">
+            <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
           </Button>
         </div>
       </div>

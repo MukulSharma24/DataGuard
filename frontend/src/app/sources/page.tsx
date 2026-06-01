@@ -129,6 +129,7 @@ function SourceSkeleton() {
 export default function SourcesPage() {
   const [sources, setSources]     = useState<any[]>([]);
   const [loading, setLoading]     = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   const [modal, setModal]         = useState(false);
   const [srcType, setSrcType]     = useState<SourceType>('postgresql');
@@ -145,11 +146,11 @@ export default function SourcesPage() {
   const [testResults, setTestResults] = useState<Record<string, any>>({});
   const [testing, setTesting]     = useState<string | null>(null);
 
-  const load = useCallback(() => {
-    setLoading(true);
+  const load = useCallback((manual = false) => {
+    if (manual) setRefreshing(true); else setLoading(true);
     getSources()
       .then(r => setSources(r.sources ?? []))
-      .finally(() => setLoading(false));
+      .finally(() => { setLoading(false); setRefreshing(false); });
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -223,8 +224,8 @@ export default function SourcesPage() {
           <p className="text-sm text-slate-500 mt-1">Manage the databases DataGuard scans for PII</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="secondary" size="sm" onClick={load} title="Refresh">
-            <RefreshCw size={13} />
+          <Button variant="secondary" size="sm" onClick={() => load(true)} disabled={refreshing || loading} title="Refresh">
+            <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
           </Button>
           <Button size="sm" onClick={openModal}>
             <Plus size={14} /> Add Source

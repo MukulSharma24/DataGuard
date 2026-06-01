@@ -2,7 +2,7 @@
 
 const crypto = require('crypto');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { maskValue } = require('./piiClassifier');
+const { maskValue, maskForLLM } = require('./piiClassifier');
 const logger = require('../utils/logger');
 
 // ---------------------------------------------------------------------------
@@ -53,14 +53,18 @@ async function classifyTableWithLLM(schemaName, tableName, fields, patternHints 
   const resultMap     = new Map();
   const uncachedFields = [];
 
-  // Mask all sample values before they leave this environment
+  // Mask samples with maskForLLM — preserves type signatures (format, length hints,
+  // algorithm names) so the model can classify correctly without seeing real PII.
+  // maskForLLM is stricter than the user-facing maskValue: hashes become [bcrypt-hash],
+  // dates show year-only, names show initials, tokens show length hints, etc.
   const columnList = fields.map(f => ({
     name:    f.name,
     type:    f.dataType || 'unknown',
     samples: f.samples
       .filter(v => v !== null && v !== undefined && String(v).trim() !== '')
       .slice(0, 15)
-      .map(v => maskValue(String(v).slice(0, 100))),
+      .map(v => maskForLLM(String(v).slice(0, 200)))
+      .filter(Boolean),
   }));
 
   // Serve cached columns immediately
@@ -322,7 +326,7 @@ function mergeResults(patternFindings, llmMap, fields) {
     const maskedSamples = field.samples
       .filter(v => v !== null && v !== undefined && String(v).trim() !== '')
       .slice(0, 3)
-      .map(maskValue)
+      .map(v => maskValue(String(v)))
       .filter(Boolean);
 
     const isHigh = llm.confidence === 'HIGH';

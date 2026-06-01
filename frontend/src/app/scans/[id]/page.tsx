@@ -55,17 +55,18 @@ function SampleChip({ value }: { value: string }) {
 }
 
 function SampleValues({ values }: { values: string[] }) {
-  const [show, setShow] = useState(false);
-  if (!values || values.length === 0) return (
+  const [show, setShow] = useState(true);
+  const valid = (values ?? []).filter(v => v && String(v).trim().length > 0);
+  if (valid.length === 0) return (
     <div className="w-52 flex justify-end">
-      <span className="text-slate-300 text-xs">—</span>
+      <span className="text-slate-300 text-xs italic">no samples</span>
     </div>
   );
   return (
     <div className="w-52 flex items-center justify-end gap-1.5 shrink-0">
       <div className="flex items-center gap-1 overflow-visible">
         {show
-          ? values.slice(0, 3).map((v, i) => <SampleChip key={i} value={v} />)
+          ? valid.slice(0, 3).map((v, i) => <SampleChip key={i} value={v} />)
           : <span className="text-xs text-slate-300 tracking-[0.3em] select-none">••••••</span>
         }
       </div>

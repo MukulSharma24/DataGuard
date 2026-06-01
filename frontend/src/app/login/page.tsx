@@ -137,16 +137,6 @@ export default function LoginPage() {
           </form>
         </div>
 
-        <p className="text-center text-slate-700 text-[11px] mt-5 leading-relaxed">
-          First time?{' '}
-          <span className="text-slate-600">
-            POST to{' '}
-            <code className="bg-white/[0.05] text-slate-400 px-1.5 py-0.5 rounded-md font-mono text-[10px]">
-              /api/auth/register
-            </code>
-            {' '}to create an admin account
-          </span>
-        </p>
       </div>
     </div>
   );

@@ -16,16 +16,21 @@ export default function LogsPage() {
   const [scans, setScans]           = useState<any[]>([]);
   const [sources, setSources]       = useState<any[]>([]);
   const [loading, setLoading]       = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected]     = useState<any>(null);
   const [testResults, setTestResults] = useState<Record<string, any>>({});
   const [testing, setTesting]       = useState<string | null>(null);
 
-  async function load() {
-    setLoading(true);
-    const [sc, sr] = await Promise.all([getScans({ limit: '50' }), getSources()]);
-    setScans(sc.scans ?? []);
-    setSources(sr.sources ?? []);
-    setLoading(false);
+  async function load(manual = false) {
+    if (manual) setRefreshing(true); else setLoading(true);
+    try {
+      const [sc, sr] = await Promise.all([getScans({ limit: '50' }), getSources()]);
+      setScans(sc.scans ?? []);
+      setSources(sr.sources ?? []);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }
 
   useEffect(() => { load(); }, []);
@@ -53,8 +58,8 @@ export default function LogsPage() {
             Connection tests, scan errors, and operational history
           </p>
         </div>
-        <Button variant="secondary" size="sm" onClick={load}>
-          <RefreshCw size={13} /> Refresh
+        <Button variant="secondary" size="sm" onClick={() => load(true)} disabled={refreshing || loading}>
+          <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} /> Refresh
         </Button>
       </div>
 
