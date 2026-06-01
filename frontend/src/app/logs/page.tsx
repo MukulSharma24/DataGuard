@@ -8,7 +8,7 @@ import { Card, CardHeader, CardBody } from '@/components/ui/Card';
 import { SkeletonRow, Skeleton } from '@/components/ui/Skeleton';
 import { Button } from '@/components/ui/Button';
 import {
-  ScrollText, RefreshCw, TestTube2,
+  ScrollText, RefreshCw, TestTube2, Database,
   CheckCircle2, XCircle, AlertTriangle, X
 } from 'lucide-react';
 
@@ -66,7 +66,12 @@ export default function LogsPage() {
       {/* Connection test panel */}
       <Card>
         <CardHeader>
-          <h2 className="text-sm font-semibold text-slate-900">Connection Tests</h2>
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 rounded-lg bg-indigo-50 flex items-center justify-center">
+              <TestTube2 size={12} className="text-indigo-600" />
+            </div>
+            <h2 className="text-sm font-semibold text-slate-900">Connection Tests</h2>
+          </div>
         </CardHeader>
         <div className="divide-y divide-slate-50">
           {loading ? (
@@ -89,21 +94,31 @@ export default function LogsPage() {
           ) : sources.map(src => {
             const tr = testResults[src.id];
             return (
-              <div key={src.id} className="flex items-center justify-between px-5 py-3.5 hover:bg-slate-50/70 transition-colors">
-                <div>
-                  <p className="text-sm font-semibold text-slate-800">{src.name}</p>
-                  <p className="text-xs text-slate-400 mt-0.5 capitalize">
-                    {src.type} · Last scanned: {formatDate(src.last_scanned)}
-                  </p>
+              <div key={src.id} className="flex items-center justify-between px-5 py-3.5 hover:bg-slate-50/60 transition-colors group">
+                <div className="flex items-center gap-3">
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                    src.type === 'postgresql' ? 'bg-blue-50' : 'bg-emerald-50'
+                  }`}>
+                    <Database size={13} className={src.type === 'postgresql' ? 'text-blue-600' : 'text-emerald-600'} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800 group-hover:text-slate-900">{src.name}</p>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      <span className={`font-semibold ${src.type === 'postgresql' ? 'text-blue-700' : 'text-emerald-700'}`}>
+                        {src.type === 'postgresql' ? 'PostgreSQL' : 'MongoDB'}
+                      </span>
+                      {' · '}Last scanned: {formatDate(src.last_scanned)}
+                    </p>
+                  </div>
                 </div>
                 <div className="flex items-center gap-3">
                   {tr && (
-                    <span className={`text-xs flex items-center gap-1.5 font-medium ${
-                      tr.success ? 'text-emerald-600' : 'text-rose-500'
+                    <span className={`text-xs flex items-center gap-1.5 font-semibold px-2.5 py-1 rounded-full ${
+                      tr.success ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-600'
                     }`}>
                       {tr.success
-                        ? <><CheckCircle2 size={13} /> {tr.latencyMs}ms</>
-                        : <><XCircle size={13} /> {tr.error}</>
+                        ? <><CheckCircle2 size={12} /> {tr.latencyMs}ms</>
+                        : <><XCircle size={12} /> Failed</>
                       }
                     </span>
                   )}

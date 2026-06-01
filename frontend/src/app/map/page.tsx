@@ -81,38 +81,44 @@ export default function DataMapPage() {
       ) : (
         <div className="flex gap-5 items-start">
           {/* Source list */}
-          <div className="w-64 shrink-0 space-y-2">
-            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-3">
+          <div className="w-72 shrink-0 space-y-2.5">
+            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+              <Database size={11} />
               Data Sources
             </p>
             {bySource.map(src => (
               <button
                 key={src.source_id}
                 onClick={() => setSelected(selected === src.source_id ? null : src.source_id)}
-                className={`w-full text-left rounded-xl border p-4 transition-all duration-150 ${
+                className={`w-full text-left rounded-xl border p-4 transition-all duration-200 ${
                   selected === src.source_id
-                    ? 'border-indigo-300 bg-indigo-50 shadow-sm shadow-indigo-100'
-                    : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-card'
+                    ? 'border-indigo-300 bg-indigo-50 shadow-md shadow-indigo-100/50 -translate-y-px'
+                    : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-card-md hover:-translate-y-px'
                 }`}
               >
-                <div className="flex items-center gap-2 mb-1.5">
-                  <Database
-                    size={14}
-                    className={selected === src.source_id ? 'text-indigo-500' : 'text-slate-400'}
-                  />
-                  <span className={`font-semibold text-sm leading-tight ${
-                    selected === src.source_id ? 'text-indigo-700' : 'text-slate-800'
+                <div className="flex items-center gap-2.5 mb-2">
+                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                    selected === src.source_id ? 'bg-indigo-100' :
+                    src.source_type === 'postgresql' ? 'bg-blue-50' : 'bg-emerald-50'
                   }`}>
-                    {src.source_name}
-                  </span>
+                    <Database size={13} className={
+                      selected === src.source_id ? 'text-indigo-600' :
+                      src.source_type === 'postgresql' ? 'text-blue-600' : 'text-emerald-600'
+                    } />
+                  </div>
+                  <div className="min-w-0">
+                    <span className={`font-semibold text-sm leading-tight block truncate ${
+                      selected === src.source_id ? 'text-indigo-700' : 'text-slate-800'
+                    }`}>
+                      {src.source_name}
+                    </span>
+                    <span className="text-xs text-slate-400">
+                      {src.total_fields} PII field{src.total_fields !== 1 ? 's' : ''}
+                    </span>
+                  </div>
                 </div>
-                <p className="text-xs text-slate-400 mb-2.5">
-                  <span className="capitalize">{src.source_type}</span>
-                  {' · '}{src.total_fields} field{src.total_fields !== 1 ? 's' : ''}
-                  {' · '}{src.categories_found} categories
-                </p>
                 <div className="flex flex-wrap gap-1">
-                  {(src.categories as string[]).slice(0, 4).map((c: string) => (
+                  {(src.categories as string[]).slice(0, 5).map((c: string) => (
                     <Badge
                       key={c}
                       label={c}
@@ -120,9 +126,9 @@ export default function DataMapPage() {
                       className={`${PII_CATEGORY_COLOURS[c] ?? 'bg-slate-100 text-slate-600'} border-transparent`}
                     />
                   ))}
-                  {src.categories.length > 4 && (
+                  {src.categories.length > 5 && (
                     <span className="text-[11px] text-slate-400 font-medium self-center">
-                      +{src.categories.length - 4}
+                      +{src.categories.length - 5}
                     </span>
                   )}
                 </div>
@@ -132,17 +138,18 @@ export default function DataMapPage() {
 
           {/* Arrow connector */}
           {selected && (
-            <div className="flex items-start pt-20 shrink-0">
-              <ChevronRight size={18} className="text-slate-300" />
+            <div className="flex items-center pt-16 shrink-0">
+              <ChevronRight size={20} className="text-indigo-300" />
             </div>
           )}
 
           {/* Category breakdown */}
           {selected && (
             <div className="flex-1 space-y-3 min-w-0">
-              <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-3">
-                PII Categories in{' '}
-                <span className="text-slate-600">
+              <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />
+                PII in{' '}
+                <span className="text-slate-600 normal-case tracking-normal font-semibold">
                   {bySource.find(s => s.source_id === selected)?.source_name}
                 </span>
               </p>

@@ -12,6 +12,15 @@ import Link from 'next/link';
 
 type View = 'published' | 'pending';
 
+const PII_CATEGORY_ACCENT: Record<string, string> = {
+  NAME: 'bg-sky-500', EMAIL: 'bg-violet-500', PHONE: 'bg-teal-500',
+  ADDRESS: 'bg-orange-500', DOB: 'bg-pink-500', GENDER: 'bg-fuchsia-500',
+  AADHAAR: 'bg-red-500', PAN: 'bg-amber-500', BANK_ACCOUNT: 'bg-emerald-500',
+  USER_ID: 'bg-indigo-500', CREDENTIAL: 'bg-rose-500', SALARY: 'bg-cyan-500',
+  HEALTH: 'bg-lime-500', MARITAL: 'bg-purple-500', NATIONALITY: 'bg-blue-500',
+  RELIGION: 'bg-yellow-500', BIOMETRIC: 'bg-slate-500',
+};
+
 export default function CataloguePage() {
   const [entries, setEntries]   = useState<any[]>([]);
   const [sources, setSources]   = useState<any[]>([]);
@@ -137,12 +146,13 @@ export default function CataloguePage() {
             {entries.map(entry => (
               <Card
                 key={entry.id}
-                className="hover:shadow-card-md transition-all duration-200 hover:-translate-y-px"
+                className="hover:shadow-card-md transition-all duration-200 hover:-translate-y-px group"
               >
+                <div className={`h-1 ${PII_CATEGORY_ACCENT[entry.pii_category] ?? 'bg-slate-400'}`} />
                 <CardBody className="p-5">
                   <div className="flex items-start justify-between gap-2 mb-3">
                     <div className="min-w-0 flex-1">
-                      <p className="font-mono text-sm font-bold text-slate-900 truncate leading-tight">
+                      <p className="font-mono text-sm font-bold text-slate-900 truncate leading-tight group-hover:text-indigo-700 transition-colors">
                         {entry.field_path}
                       </p>
                       <p className="text-xs text-slate-400 mt-1 truncate">
@@ -158,13 +168,18 @@ export default function CataloguePage() {
                       size="sm"
                     />
                   </div>
-                  <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                  <div className="flex items-center justify-between pt-3 border-t border-slate-50">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-[11px] text-slate-400 capitalize font-medium">
-                        {entry.source_type}
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide ${
+                        entry.source_type === 'postgresql' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'
+                      }`}>
+                        {entry.source_type === 'postgresql' ? 'PG' : 'MDB'}
                       </span>
                       <span className="text-slate-200">·</span>
-                      <span className="text-[11px] text-slate-400 font-medium">
+                      <span className={`text-[11px] font-semibold ${
+                        entry.confidence_level === 'HIGH' ? 'text-emerald-700' :
+                        entry.confidence_level === 'MEDIUM' ? 'text-amber-700' : 'text-slate-500'
+                      }`}>
                         {entry.confidence_level}
                       </span>
                       {isPending && (

@@ -260,19 +260,29 @@ export default function SourcesPage() {
           {sources.map(src => {
             const tr = testResults[src.id];
             return (
-              <Card key={src.id} className="hover:shadow-card-md transition-shadow duration-200">
+              <Card key={src.id} className="hover:shadow-card-md hover:-translate-y-px transition-all duration-200 group">
                 <CardBody className="flex items-center justify-between gap-4 py-4">
                   <div className="flex items-center gap-3.5 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center shrink-0">
-                      <Database size={17} className="text-indigo-600" />
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-transform duration-200 group-hover:scale-105 ${
+                      src.type === 'postgresql' ? 'bg-blue-50' : 'bg-emerald-50'
+                    }`}>
+                      <Database size={17} className={src.type === 'postgresql' ? 'text-blue-600' : 'text-emerald-600'} />
                     </div>
                     <div className="min-w-0">
-                      <p className="font-semibold text-slate-900 text-sm leading-tight truncate">
-                        {src.name}
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold text-slate-900 text-sm leading-tight truncate">
+                          {src.name}
+                        </p>
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0 ${
+                          src.type === 'postgresql'
+                            ? 'bg-blue-50 text-blue-700'
+                            : 'bg-emerald-50 text-emerald-700'
+                        }`}>
+                          {src.type === 'postgresql' ? 'PG' : 'MDB'}
+                        </span>
+                      </div>
                       <p className="text-xs text-slate-400 mt-0.5">
-                        <span className="capitalize">{src.type}</span>
-                        {' · '}Last scanned:{' '}
+                        Last scanned:{' '}
                         <span className="text-slate-500">{formatDate(src.last_scanned)}</span>
                       </p>
                     </div>
@@ -281,12 +291,12 @@ export default function SourcesPage() {
                   <div className="flex items-center gap-3 shrink-0">
                     {/* PII count */}
                     {src.pii_fields_found > 0 ? (
-                      <span className="flex items-center gap-1.5 text-xs text-rose-600 font-medium">
-                        <ShieldAlert size={13} />
+                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-100 rounded-full px-2.5 py-1">
+                        <ShieldAlert size={11} />
                         {src.pii_fields_found} PII field{src.pii_fields_found !== 1 ? 's' : ''}
                       </span>
                     ) : (
-                      <span className="text-xs text-slate-400">No PII found yet</span>
+                      <span className="text-xs text-slate-400 bg-slate-50 rounded-full px-2.5 py-1">No PII found</span>
                     )}
 
                     {/* Test result */}

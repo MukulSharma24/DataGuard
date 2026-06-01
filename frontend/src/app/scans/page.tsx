@@ -91,11 +91,11 @@ export default function ScansPage() {
               <Link
                 key={scan.id}
                 href={`/scans/${scan.id}`}
-                className="flex items-center gap-3 px-5 py-4 hover:bg-slate-50/80 transition-colors group"
+                className="flex items-center gap-3 px-5 py-4 hover:bg-slate-50/70 transition-colors group border-l-2 border-transparent hover:border-l-indigo-200"
               >
-                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                <div className={`w-2 h-2 rounded-full shrink-0 ${
                   scan.status === 'completed' ? 'bg-emerald-500' :
-                  scan.status === 'running'   ? 'bg-blue-500' :
+                  scan.status === 'running'   ? 'bg-blue-500 animate-pulse' :
                   scan.status === 'failed'    ? 'bg-rose-500' :
                   scan.status === 'partial'   ? 'bg-amber-500' :
                   scan.status === 'cancelled' ? 'bg-slate-400' : 'bg-slate-300'
@@ -105,11 +105,11 @@ export default function ScansPage() {
                     <p className="font-semibold text-slate-900 text-sm group-hover:text-indigo-700 transition-colors truncate">
                       {scan.source_name}
                     </p>
-                    <Badge
-                      label={scan.source_type}
-                      size="sm"
-                      className="bg-slate-100 text-slate-500 border-slate-200 hidden sm:inline-flex capitalize"
-                    />
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0 ${
+                      scan.source_type === 'postgresql' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'
+                    }`}>
+                      {scan.source_type === 'postgresql' ? 'PG' : 'MDB'}
+                    </span>
                   </div>
                   <p className="text-xs text-slate-400 mt-0.5 truncate">
                     {scan.profile_name} · {formatDate(scan.started_at)}

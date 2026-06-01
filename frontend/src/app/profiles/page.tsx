@@ -147,24 +147,34 @@ export default function ProfilesPage() {
       ) : (
         <div className="space-y-3">
           {profiles.map(p => (
-            <Card key={p.id} className="hover:shadow-card-md transition-shadow duration-200">
+            <Card key={p.id} className="hover:shadow-card-md hover:-translate-y-px transition-all duration-200 group">
               <CardBody className="flex items-center justify-between gap-4 py-4">
                 <div className="flex items-center gap-3.5 min-w-0 flex-1">
-                  <div className="w-10 h-10 rounded-xl bg-violet-50 flex items-center justify-center shrink-0">
+                  <div className="w-10 h-10 rounded-xl bg-violet-50 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform duration-200">
                     <Settings2 size={17} className="text-violet-600" />
                   </div>
                   <div className="min-w-0">
                     <p className="font-semibold text-slate-900 text-sm leading-tight truncate">
                       {p.name}
                     </p>
-                    <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5">
-                      <Database size={11} className="text-slate-400" />
-                      <span>{p.source_name}</span>
+                    <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                      <Database size={11} className="text-slate-400 shrink-0" />
+                      <span className="text-xs text-slate-500">{p.source_name}</span>
                       <span className="text-slate-300">·</span>
-                      <span className="capitalize">{p.source_type}</span>
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide ${
+                        p.source_type === 'postgresql' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'
+                      }`}>
+                        {p.source_type === 'postgresql' ? 'PG' : 'MDB'}
+                      </span>
+                      {p.config?.sampleSize && (
+                        <>
+                          <span className="text-slate-300">·</span>
+                          <span className="text-xs text-slate-400">{p.config.sampleSize} samples</span>
+                        </>
+                      )}
                       <span className="text-slate-300">·</span>
-                      <span>Created {formatDate(p.created_at)}</span>
-                    </p>
+                      <span className="text-xs text-slate-400">Created {formatDate(p.created_at)}</span>
+                    </div>
                     {p.description && (
                       <p className="text-xs text-slate-500 mt-1 leading-relaxed">{p.description}</p>
                     )}

@@ -25,15 +25,13 @@ function StatCard({ label, value, icon: Icon, bg, fg, accent }: {
   label: string; value: any; icon: any; bg: string; fg: string; accent: string;
 }) {
   return (
-    <Card className="hover:shadow-card-md transition-all duration-200">
-      <div className={`h-0.5 ${accent}`} />
+    <Card className="hover:shadow-card-md hover:-translate-y-px transition-all duration-200 group">
+      <div className={`h-1 ${accent}`} />
       <CardBody className="p-5">
-        <div className="flex items-start justify-between mb-4">
-          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${bg}`}>
-            <Icon size={14} className={fg} />
-          </div>
+        <div className={`w-9 h-9 rounded-xl flex items-center justify-center mb-4 ${bg} group-hover:scale-105 transition-transform duration-200`}>
+          <Icon size={16} className={fg} />
         </div>
-        <p className="text-[28px] font-bold text-slate-900 tabular-nums tracking-tight leading-none">
+        <p className="text-[30px] font-bold text-slate-900 tabular-nums tracking-tight leading-none">
           {value ?? <span className="text-slate-300 text-2xl">—</span>}
         </p>
         <p className="text-xs text-slate-500 mt-2.5 font-medium">{label}</p>
